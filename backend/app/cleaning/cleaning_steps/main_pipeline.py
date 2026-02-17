@@ -5,9 +5,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
-from ..profiling.profiling import profile_dataframe
-from ..cleaning_agent.cleaning_policy_agent import build_cleaning_plan
-from ..cleaning_agent.schemas import CleaningPlan
+from backend.app.profiling.profiling import profile_dataframe
+from backend.app.cleaning.cleaning_agent.cleaning_policy_agent import build_cleaning_plan
+from backend.app.cleaning.cleaning_agent.schemas import CleaningPlan
 
 from ._01_normalize import normalize_columns
 from ._02_trim_strings import trim_strings

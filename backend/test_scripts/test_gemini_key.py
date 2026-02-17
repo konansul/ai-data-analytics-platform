@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from backend.app.cleaning_agent.llm_client import LLMClient
+from backend.app.cleaning.cleaning_agent.llm_client import LLMClient
 
 client = LLMClient.from_env()
 

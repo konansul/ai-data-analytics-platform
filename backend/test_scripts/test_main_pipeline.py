@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from backend.app.ingestion.dataset_loader import load_from_path
-from backend.app.cleaning_steps.main_pipeline import run_cleaning_pipeline
+from backend.app.cleaning.cleaning_steps.main_pipeline import run_cleaning_pipeline
 
 
 def _pretty(obj) -> str:

@@ -4,7 +4,7 @@ load_dotenv()
 import pandas as pd
 
 from backend.app.profiling.profiling import profile_dataframe
-from backend.app.cleaning_agent.cleaning_policy_agent import build_cleaning_plan
+from backend.app.cleaning.cleaning_agent.cleaning_policy_agent import build_cleaning_plan
 
 df = pd.read_csv("/Users/konansul/Desktop/github/ml-projects/02 – Logistic Regression/data/framingham.csv")
 
