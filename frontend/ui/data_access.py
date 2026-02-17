@@ -42,14 +42,13 @@ def login_user(email: str, password: str) -> Dict[str, Any]:
     if not token:
         raise RuntimeError("Login succeeded but no access_token returned")
 
-    st.session_state["auth_token"] = token
     return data
 
 
 def auth_me() -> Dict[str, Any]:
     resp = requests.get(f"{API_BASE}/auth/me", headers=_auth_headers(), timeout=TIMEOUT)
     _raise(resp)
-    return resp.json()  # {user_id, email}
+    return resp.json()
 
 
 def logout_user() -> None:
