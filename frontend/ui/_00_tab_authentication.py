@@ -1,26 +1,37 @@
 # frontend/ui/_00_tab_authentication.py
 from __future__ import annotations
 
-import streamlit as st
 from typing import Optional
-
 from ui.data_access import register_user, login_user, auth_me, logout_user
 
+import streamlit as st
+import extra_streamlit_components as stx
+
+cookie_manager = stx.CookieManager()
+COOKIE_KEY = "auth_token"
+
 def _set_token(token: Optional[str]) -> None:
-    if token:
+    if token and isinstance(token, str):
         st.session_state["auth_token"] = token
+        cookie_manager.set(COOKIE_KEY, token, key="set_auth_cookie")
     else:
         st.session_state.pop("auth_token", None)
+        cookie_manager.delete(COOKIE_KEY, key="del_auth_cookie")
 
 
 def render_tab_auth() -> None:
     st.subheader("Authentication")
 
+    if not st.session_state.get("auth_token"):
+        tok = cookie_manager.get(COOKIE_KEY)
+        if isinstance(tok, str) and tok:
+            st.session_state["auth_token"] = tok
+
     token = st.session_state.get("auth_token")
     if token:
         try:
             me = auth_me()
-            st.success(f"✅ Logged in as {me.get('email')}")
+            st.success(f"Logged in as {me.get('email')} ✅")
         except Exception:
             st.warning("Token exists but is invalid/expired. Please login again.")
             _set_token(None)
