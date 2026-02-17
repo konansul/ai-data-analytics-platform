@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-from typing import Dict
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +13,7 @@ from backend.database.models import Dataset
 from backend.database.storage import get_bytes
 
 from backend.app.profiling.profiling import profile_dataframe
-from backend.app.cleaning_agent.cleaning_policy_agent import build_cleaning_plan
+from backend.app.cleaning.cleaning_agent.cleaning_policy_agent import build_cleaning_plan
 
 router = APIRouter()
 

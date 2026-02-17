@@ -9,14 +9,13 @@ from typing import Any, Dict, Optional, List
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from backend.api.auth import get_current_user
 from backend.api.models import CleaningRunRequest, CleaningRunResponse
 from backend.api.storage import new_id
 
-from backend.app.cleaning_steps.main_pipeline import run_cleaning_pipeline
+from backend.app.cleaning.cleaning_steps.main_pipeline import run_cleaning_pipeline
 
 from backend.database.storage import get_bytes, put_bytes, delete_key, to_jsonable
 from backend.database.db import get_db
