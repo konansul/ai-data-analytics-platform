@@ -25,5 +25,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
-print("DATABASE_URL =", DATABASE_URL)
