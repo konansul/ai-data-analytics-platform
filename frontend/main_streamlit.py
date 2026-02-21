@@ -6,7 +6,8 @@ from ui._01_tab_excel_upload import render_tab_ingestion
 from ui._02_tab_cleaning import render_tab_cleaning
 from ui._03_tab_signals import render_tab_signals
 from ui._04_tab_visualization import render_tab_visualization
-from ui._05_save_all_files import render_tab_saved_datasets
+from ui._05_tab_forecasting import render_tab_forecasting
+from ui._06_save_all_files import render_tab_saved_datasets
 
 st.set_page_config(page_title="4CAST", layout="wide")
 st.title("4CAST — Data Cleaning and Analysis")
@@ -39,13 +40,14 @@ def get_active_dataset():
     return selected_file, sheet_meta, dataset_id
 
 
-tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "0) Authentication",
     "1) Upload Files",
     "2) Data Cleaning",
     "3) Signal Generation",
     "4) Visualization",
-    "5) Download All Cleaned Files",
+    "5) Forecasting",
+    "6) Download All Cleaned Files",
 ])
 
 with tab0:
@@ -99,6 +101,18 @@ with tab4:
             render_tab_visualization()
 
 with tab5:
+    if not is_authed():
+        st.info("Please login first.")
+    elif not dataset_id:
+        st.info("Please upload the dataset first.")
+    else:
+        item = st.session_state.runs_store.get(dataset_id)
+        if not item:
+            st.info("Please clean the dataset first in third tab.")
+        else:
+            render_tab_forecasting(dataset_id=dataset_id)
+
+with tab6:
     if not is_authed():
         st.info("Please login first.")
     else:
