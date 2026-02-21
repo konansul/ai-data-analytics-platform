@@ -3,10 +3,9 @@ import json
 import os
 import requests
 from typing import Any, Dict
-from backend.app.cleaning_agent.llm_client import LLMClient
+from backend.app.cleaning.cleaning_agent.llm_client import LLMClient
 from backend.app.visualization.schemas import PlotConfig, VisualizationPlan
-from backend.app.visualization.schemas import ExplainResponse
-from backend.app.visualization.schemas import ExplainRequest
+
 
 class VisualizationAgent:
     def __init__(self, model: str = "gemini-2.5-flash"):
