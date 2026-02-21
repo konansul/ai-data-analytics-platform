@@ -1,12 +1,28 @@
-# Multi-Agent Excel Analytics
+# 4CAST — AI-Assisted Data Cleaning, Visualization, and Forecasting Platform
 
-This project is a web application for uploading, profiling, cleaning, and analyzing tabular datasets (Excel and CSV files) using a FastAPI backend and a Streamlit frontend.
-Each dataset is processed per user, with full history of cleaning runs stored on the backend. The system supports, multi-sheet Excel ingestion , dataset profiling , automated and LLM-assisted data cleaning , persistent cleaning runs , exporting cleaned data as combined Excel files
-
+4CAST is an end-to-end data analytics platform for transforming raw Excel and CSV files into clean, analysis-ready datasets with automated visualization and time-series forecasting. The system provides user-scoped ingestion of multi-sheet spreadsheets, dataset profiling, rule-based and LLM-assisted cleaning pipelines, persistent execution history, and reproducible exports. On top of cleaned data, 4CAST generates intelligent visualization suggestions and executes forecasting workflows using a signal, planning, execution architecture. The backend is built with FastAPI and PostgreSQL for durable storage of datasets and runs, while the Streamlit frontend delivers an interactive workflow for ingestion, cleaning, exploration, visualization, and forecasting — all fully decoupled through REST APIs.
 
 ## Requirements
 	•	Docker, Docker Compose
-	•	Python 3.9+ (fastapi, uvicorn, sqlalchemy, psycopg2, pandas, pyarrow, xlsxwriter, pydantic)
+	•	Python 3.9+ 
+
+Core backend dependencies include:
+
+- fastapi
+- uvicorn
+- sqlalchemy
+- psycopg2
+- pandas
+- pyarrow
+- xlsxwriter
+- pydantic
+- scikit-learn 
+- statsmodels 
+- prophet or fbprophet
+
+Frontend:
+- streamlit
+- requests
 
 All Python dependencies are listed in requirements.txt.
 
@@ -14,8 +30,8 @@ All Python dependencies are listed in requirements.txt.
 ## Setup
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/konansul/Multi-Agent-Excel-Analytics
-cd Multi-Agent-Excel-Analytics
+git clone https://github.com/konansul/ai-data-analytics-platform
+cd ai-data-analytics-platform
 ```
 
 ### 2. Start PostgreSQL through Docker.
@@ -74,84 +90,99 @@ The backend uses a PostgreSQL database to persist users, datasets, profiling res
 ## Project structure
 
 ```bash
-Multi-Agent-Excel-Analytics/
+ai-data-analytics-platform/
 │
 ├── backend/                             # FastAPI backend
-│   ├── api/                             # API routers and HTTP layer
-│   │   ├── auth.py                      # Authentication endpoints
-│   │   ├── cleaning.py                  # Cleaning runs API
-│   │   ├── datasets.py                  # Dataset upload and access
-│   │   ├── policy.py                    # Cleaning policy endpoints
-│   │   ├── profiling.py                 # Profiling endpoints
-│   │   ├── storage.py                   # API-level storage helpers
-│   │   └── main.py                      # FastAPI application entrypoint
+│   ├── api/                            # HTTP layer (routers + request/response models)
+│   │   ├── auth.py                     # Authentication endpoints (register/login/me)
+│   │   ├── datasets.py                # Dataset upload, preview, download
+│   │   ├── cleaning.py                # Cleaning run orchestration endpoints
+│   │   ├── profiling.py               # Dataset profiling endpoints
+│   │   ├── policy.py                  # Cleaning policy suggestion endpoints
+│   │   ├── visualization.py           # Visualization suggest/explain endpoints
+│   │   ├── forecasting.py             # Forecast signals / planning / execution endpoints
+│   │   ├── models.py                  # Shared API schemas (Pydantic)
+│   │   └── main.py                    # FastAPI application entrypoint (router orchestration)
 │   │
-│   ├── app/                             # Core business logic
-│   │   ├── ingestion/                   # Dataset ingestion (Excel/CSV parsing)
-│   │   │   └── dataset_loader.py
+│   ├── app/                            # Core business logic (framework-agnostic)
+│   │
+│   │   ├── ingestion/                 # Excel / CSV ingestion
+│   │   │   └── dataset_loader.py      # Multi-sheet Excel + CSV loader
 │   │   │
-│   │   ├── cleaning_steps/                    # 10-stage data cleaning pipeline
-│   │   │   ├── main_pipeline.py               # Orchestrates the full pipeline
-│   │   │   ├── _01_normalize.py
-│   │   │   ├── _02_trim_strings.py
-│   │   │   ├── _03_standardize_missing.py
-│   │   │   ├── _04_cast_types.py
-│   │   │   ├── _05_encode_booleans.py
-│   │   │   ├── _06_drop_rules.py
-│   │   │   ├── _07_datetime_inference.py
-│   │   │   ├── _08_deduplicate.py
-│   │   │   ├── _09_outliers.py
-│   │   │   └── _10_impute_missing.py
+│   │   ├── cleaning/                  # Deterministic + LLM cleaning system
+│   │   │   ├── cleaning_agent/        # Cleaning policy engine
+│   │   │   │   ├── cleaning_policy_agent.py   # Public cleaning planner API
+│   │   │   │   ├── cleaning_policy_llm.py     # LLM-based policy generation
+│   │   │   │   ├── cleaning_policy_rule_based.py
+│   │   │   │   ├── cleaning_policy_utils.py   # Validation / coercion / safety
+│   │   │   │   ├── llm_client.py              # Gemini wrapper
+│   │   │   │   └── schemas.py                 # CleaningPlan schemas
+│   │   │   │
+│   │   │   └── cleaning_steps/        # 10-stage deterministic cleaning pipeline
+│   │   │       ├── _01_normalize.py
+│   │   │       ├── _02_trim_strings.py
+│   │   │       ├── _03_standardize_missing.py
+│   │   │       ├── _04_cast_types.py
+│   │   │       ├── _05_encode_booleans.py
+│   │   │       ├── _06_drop_rules.py
+│   │   │       ├── _07_datetime_inference.py
+│   │   │       ├── _08_deduplicate.py
+│   │   │       ├── _09_outliers.py
+│   │   │       └── _10_impute_missing.py
 │   │   │
-│   │   ├── cleaning_agent/              # Cleaning policy engine (rule-based + LLM)
-│   │   │   ├── schemas.py                # CleaningPlan schema and validation
-│   │   │   ├── cleaning_policy_agent.py  # Public policy builder API
-│   │   │   ├── cleaning_policy_rule_based.py
-│   │   │   ├── cleaning_policy_llm.py
-│   │   │   ├── cleaning_policy_utils.py  # Safety, clamping, coercion
-│   │   │   └── llm_client.py             # Gemini LLM client wrapper
+│   │   ├── forecasting/              # Time-series forecasting subsystem
+│   │   │   ├── signals.py            # Forecast feasibility + candidate detection
+│   │   │   ├── planning_agent.py     # LLM planning agent (WHAT + HOW to forecast)
+│   │   │   ├── execution.py          # Deterministic model execution (ARIMA/Prophet/RF)
+│   │   │   └── schemas.py            # Forecast domain models
 │   │   │
-│   │   └── profiling/                   # Dataset profiling logic
+│   │   ├── visualization/            # Visualization agent
+│   │   │   ├── agent.py              # LLM visualization reasoning
+│   │   │   ├── service.py            # Chart suggestion/explanation logic
+│   │   │   └── schemas.py
+│   │   │
+│   │   └── profiling/                # Dataset profiling logic
 │   │       └── profiling.py
 │   │
-│   ├── database/                        # Database and storage layer
-│   │   ├── db.py                        # SQLAlchemy session
-│   │   ├── models.py                    # ORM models
-│   │   ├── security.py                  # JWT / auth helpers
-│   │   └── storage.py                   # Local blob storage + JSON serialization
+│   ├── database/                     # Persistence layer
+│   │   ├── db.py                     # SQLAlchemy session
+│   │   ├── models.py                 # ORM models (users, datasets, runs)
+│   │   ├── security.py               # JWT helpers
+│   │   └── storage.py                # Local blob storage abstraction
 │   │
-│   ├── test_data/                       # Sample datasets
-│   └── test_scripts/                    # Backend tests and experiments
+│   ├── test_data/                    # Sample datasets
+│   └── test_scripts/                # Experiments and backend tests
 │
-├── frontend/                            # Streamlit frontend
-│   ├── main_streamlit.py                # Streamlit application entrypoint
+├── frontend/                         # Streamlit frontend
+│   ├── main_streamlit.py            # UI entrypoint + tab orchestration
 │   └── ui/
-│       ├── _00_tab_authentication.py    # Login and registration
-│       ├── _01_tab_excel_upload.py      # File upload and ingestion
-│       ├── _02_tab_cleaning.py           # Cleaning execution UI
-│       ├── _03_tab_signals.py            # Profiling and signal visualization
-│       ├── _04_tab_visualization.py      # Charts and plots
-│       ├── _05_save_all_files.py         # Download cleaned datasets and reports
-│       ├── components.py                # Shared UI components
-│       └── data_access.py               # Frontend → Backend API client
+│       ├── _00_tab_authentication.py
+│       ├── _01_tab_excel_upload.py
+│       ├── _02_tab_cleaning.py
+│       ├── _03_tab_signals.py
+│       ├── _04_tab_visualization.py
+│       ├── _05_tab_forecasting.py
+│       ├── _06_save_all_files.py
+│       ├── components.py
+│       └── data_access.py           # Frontend and backend REST client
 │
-├── storage/                             # Persistent local storage (user-scoped)
+├── storage/                         # Persistent local storage (user-scoped)
 │   └── users/
 │       └── usr_<user_id>/
-│           ├── datasets/                # Uploaded raw datasets
+│           ├── datasets/            # Uploaded datasets (per sheet)
 │           │   └── ds_<dataset_id>/
-│           │       ├── raw.bin
-│           │       ├── raw.parquet
-│           │       └── current.parquet
+│           │       ├── raw.bin      # Original uploaded file bytes
+│           │       ├── raw.parquet  # Parsed raw dataframe
+│           │       └── current.parquet # Latest cleaned version
 │           │
-│           └── runs/                    # Cleaning runs history
+│           └── runs/                # Cleaning run history
 │               └── run_<run_id>/
-│                   ├── cleaned.parquet
-│                   ├── cleaned.xlsx
-│                   └── report.json
+│                   ├── cleaned.parquet  # Cleaned dataframe
+│                   ├── cleaned.xlsx     # Exported Excel
+│                   └── report.json      # Full cleaning report + signals
 │
-├── docker-compose.yml                   # PostgreSQL
-├── requirements.txt                     # Python dependencies
+├── docker-compose.yml               # PostgreSQL container
+├── requirements.txt                # Python dependencies
 ├── README.md
 └── LICENSE
 ```
@@ -201,5 +232,18 @@ GET    /v1/cleaning/runs/{run_id}/artifacts/{name} Download artifact
 DELETE /v1/cleaning/runs/{run_id}                 Delete run
 ```
 
-Notes: Excel files with multiple sheets are ingested as multiple datasets. Cleaning can be rule-based or LLM-assisted. Cleaning history persists across sessions per user. CSV files are treated as single-sheet datasets. Frontend and backend are intentionally decoupled and run independently.
+### 6. Visualization
 
+```bash
+POST /v1/visualization/suggest   Suggest visualizations for a dataset
+POST /v1/visualization/explain  Explain a specific chart configuration
+```
+
+### 7. Forecasting
+
+```bash
+POST /v1/forecast/signals   Generate forecasting signals (datetime, targets, feasibility)
+POST /v1/forecast/plan      Create forecast plan (LLM or fallback planner)
+POST /v1/forecast/run       Execute forecasting models and return predictions
+```
+Notes:  Multi-sheet Excel files are ingested as separate datasets; CSV files are treated as single-sheet inputs. Data cleaning can run in deterministic mode or with optional LLM assistance, and all runs are persisted per user. Visualization and time-series forecasting operate on cleaned datasets using generated signals and planning agents. Frontend (Streamlit) and backend (FastAPI) are fully decoupled and run as independent services.
