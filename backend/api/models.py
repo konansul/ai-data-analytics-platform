@@ -1,7 +1,7 @@
 # backend/api/models.py
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, List
 
 from pydantic import BaseModel, Field
 
@@ -11,14 +11,7 @@ class DatasetRef(BaseModel):
 
 
 class UploadResponse(BaseModel):
-    datasets: list[Dict[str, Any]]  # each sheet context meta
-    # {
-    #   "dataset_id": "...",
-    #   "file_name": "...",
-    #   "sheet_name": "...",
-    #   "shape": [rows, cols],
-    #   "dtypes": {...}
-    # }
+    datasets: list[Dict[str, Any]]
 
 
 class PreviewResponse(BaseModel):
@@ -84,3 +77,79 @@ class TokenResponse(BaseModel):
 class UserMeResponse(BaseModel):
     user_id: str
     email: str
+
+
+class ForecastSignalsRequest(BaseModel):
+    dataset_id: str
+    version: Literal["raw", "current"] = "current"
+
+
+class ForecastSignalsResponse(BaseModel):
+    dataset_id: str
+    datetime_candidates: List[Dict[str, Any]] = Field(default_factory=list)  # [{column, success_ratio, letters_ratio}]
+    inferred_frequency: str = "unknown"
+    numeric_target_candidates: List[str] = Field(default_factory=list)
+    grouping_candidates: List[str] = Field(default_factory=list)
+    feasible: bool
+
+
+class ForecastPlanRequest(BaseModel):
+    dataset_id: str
+    version: Literal["raw", "current"] = "current"
+    signals: ForecastSignalsResponse
+    profile: Optional[Dict[str, Any]] = None
+    user_intent: Optional[str] = None
+    max_targets: int = 4
+    head_rows: int = 10
+    horizon: int = Field(default=30, ge=1, le=3650)
+
+
+class ForecastTargetIn(BaseModel):
+    column: str
+    horizon: int = 30
+
+
+class ForecastPlanResponse(BaseModel):
+    dataset_id: str
+
+    suitable: bool
+    mode: Literal["overall", "grouped", "skipped"]
+
+    datetime_column: Optional[str] = None
+    inferred_frequency: Optional[str] = None
+    group_by: Optional[str] = None
+    targets: List[ForecastTargetIn] = Field(default_factory=list)
+
+    planner_source: Literal["llm", "fallback"] = "fallback"
+    llm_model: Optional[str] = None
+    reasoning: str = ""
+
+    reasons: List[str] = Field(default_factory=list)
+
+
+class ForecastRunRequest(BaseModel):
+    dataset_id: str
+    plan: ForecastPlanResponse
+    model: Literal["auto", "arima", "prophet", "random_forest"] = "auto"
+    version: Literal["raw", "current"] = "current"
+
+    horizon: int = Field(default=30, ge=1, le=3650)
+
+    preview_rows: int = 50
+
+
+class ForecastRunOneResult(BaseModel):
+    target: str
+    mode: Literal["overall", "grouped"]
+    model_used: str
+    datetime_column: str
+    group_by: Optional[str]
+    horizon: int
+    frequency: str
+    preview: List[Dict[str, Any]]
+    meta: Dict[str, Any]
+
+
+class ForecastRunResponse(BaseModel):
+    dataset_id: str
+    results: List[ForecastRunOneResult]
