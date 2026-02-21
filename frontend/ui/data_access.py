@@ -195,3 +195,67 @@ def delete_run(run_id: str) -> Dict[str, Any]:
     )
     _raise(resp)
     return resp.json()
+
+def forecast_signals(dataset_id: str, version: str = "current") -> Dict[str, Any]:
+    resp = requests.post(
+        f"{API_BASE}/forecast/signals",
+        json={"dataset_id": dataset_id, "version": version},
+        headers=_auth_headers(),
+        timeout=TIMEOUT,
+    )
+    _raise(resp)
+    return resp.json()
+
+
+def forecast_plan(
+    dataset_id: str,
+    signals: Dict[str, Any],
+    profile: Optional[Dict[str, Any]] = None,
+    user_intent: Optional[str] = None,
+    head_rows: int = 10,
+    max_targets: int = 3,
+    version: str = "current",
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "dataset_id": dataset_id,
+        "version": version,
+        "signals": signals,
+        "profile": profile,
+        "user_intent": user_intent,
+        "head_rows": int(head_rows),
+        "max_targets": int(max_targets),
+    }
+    resp = requests.post(
+        f"{API_BASE}/forecast/plan",
+        json=payload,
+        headers=_auth_headers(),
+        timeout=TIMEOUT,
+    )
+    _raise(resp)
+    return resp.json()
+
+
+def forecast_run(
+    dataset_id: str,
+    plan: Dict[str, Any],
+    horizon: int = 30,
+    model: str = "auto",
+    version: str = "current",
+    preview_rows: Optional[int] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "dataset_id": dataset_id,
+        "version": version,
+        "plan": plan,
+        "horizon": int(horizon),
+        "model": model,
+        "preview_rows": int(preview_rows if preview_rows is not None else min(int(horizon), 500)),
+    }
+    resp = requests.post(
+        f"{API_BASE}/forecast/run",
+        json=payload,
+        headers=_auth_headers(),
+        timeout=TIMEOUT,
+    )
+    _raise(resp)
+    return resp.json()
