@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import re
 
 from .schemas import CleaningPlan
 from .cleaning_policy_utils import (
@@ -10,6 +11,7 @@ from .cleaning_policy_utils import (
     _safe_int,
     _estimate_overall_missing_pct,
 )
+
 
 def build_cleaning_plan_rule_based(pre_profile: Dict[str, Any]) -> CleaningPlan:
     rows = _get_int(pre_profile, ["rows", "n_rows", "rows_before"], default=0)
@@ -139,10 +141,71 @@ def build_cleaning_plan_rule_based(pre_profile: Dict[str, Any]) -> CleaningPlan:
     if n_boolean > 0:
         notes.append(f"Boolean columns detected: {n_boolean}.")
 
+    snippet = pre_profile.get("table_snippet") or {}
+    snippet_rows = snippet.get("rows") or []
+
+    def _looks_like_year(x: Any) -> bool:
+        try:
+            s = str(x).strip().replace("*", "")
+            if len(s) != 4:
+                return False
+            y = int(s)
+            return 1900 <= y <= 2100
+        except Exception:
+            return False
+
+    def _letters_ratio(vals: List[Any]) -> float:
+        if not vals:
+            return 0.0
+        rx = re.compile(r"[A-Za-zА-Яа-яƏəÖöÜüĞğÇçŞşıİ]")
+        hits = 0
+        for v in vals:
+            if rx.search(str(v)):
+                hits += 1
+        return hits / max(len(vals), 1)
+
+    is_static_table = False
+    static_reasoning = ""
+    static_rebuild_recommended = False
+
+    if (
+        rows > 0
+        and cols > 0
+        and rows <= 40
+        and cols >= 8
+        and isinstance(snippet_rows, list)
+        and len(snippet_rows) >= 2
+        and isinstance(snippet_rows[0], list)
+    ):
+        header = snippet_rows[0]
+        header_tail = header[1:] if len(header) > 1 else []
+        year_cnt = sum(1 for v in header_tail if _looks_like_year(v))
+        year_ratio = year_cnt / max(len(header_tail), 1)
+
+        first_col_vals = []
+        for r in snippet_rows[1:]:
+            if isinstance(r, list) and len(r) > 0:
+                first_col_vals.append(r[0])
+
+        first_col_letters_ratio = _letters_ratio(first_col_vals)
+
+        if year_cnt >= 3 and year_ratio >= 0.35 and first_col_letters_ratio >= 0.50:
+            is_static_table = True
+            static_rebuild_recommended = True
+            static_reasoning = (
+                f"Header looks like years (years={year_cnt}, ratio={year_ratio:.2f}); "
+                f"first column looks like labels (letters_ratio={first_col_letters_ratio:.2f}); "
+                f"shape={rows}x{cols}."
+            )
+            notes.append("Static table layout detected → recommend LLM rebuild to tidy CSV before cleaning.")
+
     return CleaningPlan(
         enabled_steps=enabled_steps,
         params=params,
         notes=notes,
         source="rule_based",
         version=2,
+        is_static_table=is_static_table,
+        static_reasoning=static_reasoning,
+        static_rebuild_recommended=static_rebuild_recommended,
     )

@@ -29,7 +29,7 @@ You are a data-cleaning policy agent.
 
 IMPORTANT:
 - Return only valid JSON (no markdown, no extra text).
-- You do NOT receive raw dataset rows, only summary signals.
+- You do NOT receive raw dataset rows, only summary signals (and maybe a small snippet).
 
 Goal:
 Create a safe, deterministic cleaning plan for a pandas pipeline.
@@ -48,8 +48,13 @@ impute_missing
 
 Return JSON exactly in this schema:
 {{
-  "version": 2,
+  "version": 3,
   "source": "llm",
+
+  "is_static_table": true/false,
+  "static_reasoning": "short reason (1-3 sentences)",
+  "static_rebuild_recommended": true/false,
+
   "enabled_steps": {{
     "normalize": true,
     "trim_strings": true,
@@ -85,6 +90,7 @@ Return JSON exactly in this schema:
 }}
 
 Rules / constraints:
+- Return ONLY valid JSON.
 - Keep enabled_steps keys EXACTLY as listed. Do not add other steps.
 - missing_threshold must be in [0.10, 0.90].
 - row_missing_threshold must be in [0.50, 0.99].
@@ -102,11 +108,14 @@ Rules / constraints:
 - Prefer numeric_strategy="median" when skewness is present.
 - DO NOT invent columns that do not exist (you do not know column names anyway).
 
-Important behavior guidelines:
-- standardize_missing should almost always be enabled (it unlocks all other steps).
-- drop_rules should run after standardize_missing.
-- deduplicate should be enabled for most datasets unless rows are extremely small.
-- If outliers is disabled, set outliers_method="none" and outliers_action="none".
+Static table detection guidance:
+- is_static_table=true when the table is "wide-by-years" or "pivot-like", where:
+  - first column is indicators/categories, and many columns are years like 1990..2024
+  - or data looks like a report table, not row-wise observations
+- static_rebuild_recommended=true only if:
+  - the dataset is small enough AND rebuilding into a normalized row-wise table would help downstream cleaning.
+- If is_static_table=true:
+  - You may still return enabled_steps/params, but static_rebuild_recommended indicates a different pre-cleaning step should run first.
 
 Signals (pre_profile dict):
 {pre_profile}

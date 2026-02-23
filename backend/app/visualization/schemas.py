@@ -17,12 +17,10 @@ class VisualizationPlan(BaseModel):
     plots: List[PlotConfig]
 
 
-#Request Schema for Explanation
 class ExplainRequest(BaseModel):
     plot_title: str
     axis_info: str  # e.g. "X: Year, Y: Sales"
 
 
-#  Response Schema for /explain ---
 class ExplainResponse(BaseModel):
     explanation: str

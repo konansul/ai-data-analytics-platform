@@ -78,6 +78,29 @@ def _get_owned_dataset_or_404(db: Session, dataset_id: str, user_id: str) -> Dat
         raise HTTPException(status_code=404, detail="Dataset not found")
     return row
 
+def load_dataset_as_dataframe(
+    dataset_id: str,
+    user_id: str,
+    *,
+    version: Literal["raw", "current"] = "current",
+    db: Session,
+) -> pd.DataFrame:
+
+    row = _get_owned_dataset_or_404(db, dataset_id, user_id)
+
+    if version == "raw":
+        key = getattr(row, "raw_parquet_key", None)
+        if not key:
+            raise HTTPException(status_code=500, detail="raw_parquet_key is missing in DB (migration needed)")
+    else:
+        key = row.current_parquet_key
+
+    try:
+        parquet_bytes = get_bytes(key)
+        return pd.read_parquet(io.BytesIO(parquet_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read parquet from local storage: {e}")
+
 
 @router.get("/datasets")
 def list_datasets(
@@ -125,13 +148,13 @@ async def upload_dataset(
         # 2) parquet bytes -> local storage (raw + current)
         try:
             buf = io.BytesIO()
-            sc.df.to_parquet(buf, index=False)
+
+            df_to_store = sc.df_parquet_safe if sc.parquet_safe_needed else sc.df
+
+            df_to_store.to_parquet(buf, index=False)
             parquet_bytes = buf.getvalue()
 
-            # raw parquet (immutable)
             put_bytes(raw_parquet_key, parquet_bytes)
-
-            # current parquet (starts as raw)
             put_bytes(current_parquet_key, parquet_bytes)
 
         except Exception as e:
@@ -184,7 +207,6 @@ def preview_dataset(
 ):
     row = _get_owned_dataset_or_404(db, dataset_id, current_user.user_id)
 
-    # ✅ choose which parquet to read
     if version == "raw":
         key = getattr(row, "raw_parquet_key", None)
         if not key:

@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import requests
 from io import BytesIO
-from frontend.ui.data_access import API_BASE, _auth_headers, _raise, download_dataset
+from ui.data_access import API_BASE, _auth_headers, _raise, download_dataset
 
 def suggest_visualizations_api(dataset_id: str, profile_data: dict) -> dict:
     """Wrapper to call the new backend endpoint."""

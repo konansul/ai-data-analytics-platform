@@ -1,4 +1,4 @@
-# backend/app/cleaning_steps/main_pipeline.py
+# backend/app/cleaning/cleaning_steps/main_pipeline.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple, Union
@@ -8,6 +8,9 @@ import pandas as pd
 from backend.app.profiling.profiling import profile_dataframe
 from backend.app.cleaning.cleaning_agent.cleaning_policy_agent import build_cleaning_plan
 from backend.app.cleaning.cleaning_agent.schemas import CleaningPlan
+from backend.app.cleaning.cleaning_agent.llm_client import LLMClient
+
+from backend.app.cleaning.cleaning_static_file.agent import rebuild_static_table
 
 from ._01_normalize import normalize_columns
 from ._02_trim_strings import trim_strings
@@ -37,12 +40,74 @@ def run_cleaning_pipeline(
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     report: Dict[str, Any] = {}
 
+    # Create one shared LLM client for the whole pipeline (policy + static rebuild),
+    # but only if LLM is enabled.
+    llm_client: Optional[LLMClient] = None
+    if use_llm:
+        try:
+            llm_client = LLMClient.from_env(model=llm_model)
+        except Exception:
+            llm_client = None
+
+    # 1) Pre-profile
     pre_profile = profile_dataframe(df)
     report["pre_profile"] = pre_profile
 
-    plan: CleaningPlan = build_cleaning_plan(pre_profile, use_llm=use_llm, model=llm_model)
+    # 2) Build cleaning plan (LLM optional)
+    plan: CleaningPlan = build_cleaning_plan(
+        pre_profile,
+        use_llm=use_llm,
+        model=llm_model,
+        llm_client=llm_client,
+    )
     report["cleaning_plan"] = plan.to_dict()
 
+    # 3) If static table detected -> rebuild to normalized CSV-like table FIRST
+    #    Then re-profile + rebuild plan again, because schema & types change.
+    report["static_rebuild"] = {
+        "triggered": False,
+        "attempted": False,
+        "success": False,
+    }
+
+    if bool(getattr(plan, "is_static_table", False)) and bool(getattr(plan, "static_rebuild_recommended", False)):
+        report["static_rebuild"]["triggered"] = True
+        report["static_rebuild"]["attempted"] = True
+
+        try:
+            rebuilt_df, static_report = rebuild_static_table(
+                df,
+                pre_profile=pre_profile,
+                use_llm=use_llm,
+                llm_model=llm_model,
+                llm_client=llm_client,
+            )
+            report["static_rebuild"]["success"] = True
+            report["static_rebuild"].update(static_report)
+
+            # Replace working DF with rebuilt version
+            df = rebuilt_df
+
+            # Re-profile on rebuilt DF
+            pre_profile2 = profile_dataframe(df)
+            report["pre_profile_after_static_rebuild"] = pre_profile2
+
+            # Rebuild plan on rebuilt DF
+            plan = build_cleaning_plan(
+                pre_profile2,
+                use_llm=use_llm,
+                model=llm_model,
+                llm_client=llm_client,
+            )
+            report["cleaning_plan_after_static_rebuild"] = plan.to_dict()
+
+
+        except Exception as e:
+            report["static_rebuild"]["success"] = False
+            report["static_rebuild"]["error"] = f"{type(e).__name__}: {e}"
+            print("STATIC REBUILD FAILED:", e)
+
+    # 4) Apply the plan as usual
     enabled: Dict[str, bool] = dict(plan.enabled_steps or {})
     params: Dict[str, Any] = dict(plan.params or {})
 

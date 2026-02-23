@@ -46,4 +46,7 @@ def build_cleaning_plan(
             notes=notes,
             source="rule_based",
             version=rule_based_plan.version,
+            is_static_table=rule_based_plan.is_static_table,
+            static_reasoning=rule_based_plan.static_reasoning,
+            static_rebuild_recommended=rule_based_plan.static_rebuild_recommended,
         )

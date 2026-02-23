@@ -6,6 +6,46 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+def _make_table_snippet(
+    df: pd.DataFrame,
+    *,
+    max_rows: int = 12,
+    max_cols: int = 14,
+    max_cell_chars: int = 80,
+) -> Dict[str, Any]:
+    if df is None or df.empty:
+        return {"rows": [], "shape": [0, 0]}
+
+    r = max(1, min(int(max_rows), 50))
+    c = max(1, min(int(max_cols), 50))
+    max_cell_chars = max(20, min(int(max_cell_chars), 500))
+
+    head = df.iloc[:r, :c].copy()
+
+    # Convert to string-ish table, safe for LLM
+    head = head.where(pd.notnull(head), "")
+
+    # Convert datetimes to isoformat
+    for col in head.columns:
+        if pd.api.types.is_datetime64_any_dtype(head[col]):
+            head[col] = head[col].apply(lambda x: x.isoformat() if x else "")
+
+    # Everything -> string, clamp cell size
+    def _cell(v: Any) -> str:
+        s = str(v)
+        s = s.replace("\n", " ").replace("\r", " ").strip()
+        if len(s) > max_cell_chars:
+            s = s[:max_cell_chars] + "…"
+        return s
+
+    header = [_cell(x) for x in list(head.columns)]
+    body = [[_cell(v) for v in row] for row in head.to_numpy().tolist()]
+
+    return {
+        "rows": [header] + body,   # first row is header
+        "shape": [int(head.shape[0]), int(head.shape[1])],
+    }
+
 
 def profile_dataframe(
     df: pd.DataFrame,
@@ -24,6 +64,13 @@ def profile_dataframe(
     n_rows, n_cols = df.shape
     profile["n_rows"] = int(n_rows)
     profile["n_cols"] = int(n_cols)
+
+    profile["table_snippet"] = _make_table_snippet(
+        df,
+        max_rows=12,
+        max_cols=14,
+        max_cell_chars=80,
+    )
 
     mem_bytes = int(df.memory_usage(deep=True).sum()) if n_cols > 0 else 0
     profile["memory_bytes"] = mem_bytes

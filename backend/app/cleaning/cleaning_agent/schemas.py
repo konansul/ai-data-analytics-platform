@@ -20,26 +20,24 @@ StepName = Literal[
 
 @dataclass(frozen=True)
 class CleaningPlan:
-    """
-    A structured, testable plan for running the cleaning pipeline.
-
-    - enabled_steps: which pipeline steps are enabled/disabled
-    - params: thresholds/strategies for deterministic Pandas logic
-    - notes: human-readable reasoning/explanations (from rule-based or LLM)
-    - source: where the plan came from (rule_based / llm)
-    - version: plan schema version
-
-    """
     enabled_steps: Dict[StepName, bool]
     params: Dict[str, Any] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
     source: Literal["rule_based", "llm"] = "rule_based"
     version: int = 2
 
+    # NEW:
+    is_static_table: bool = False
+    static_reasoning: str = ""
+    static_rebuild_recommended: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "version": self.version,
             "source": self.source,
+            "is_static_table": bool(self.is_static_table),
+            "static_reasoning": str(self.static_reasoning or ""),
+            "static_rebuild_recommended": bool(self.static_rebuild_recommended),
             "enabled_steps": dict(self.enabled_steps),
             "params": dict(self.params),
             "notes": list(self.notes),
@@ -112,6 +110,9 @@ class CleaningPlan:
             notes=[],
             source="rule_based",
             version=2,
+            is_static_table=False,
+            static_reasoning="",
+            static_rebuild_recommended=False,
         )
 
 
@@ -183,10 +184,17 @@ def validate_plan_dict(plan: Dict[str, Any]) -> CleaningPlan:
 
     src: Literal["rule_based", "llm"] = "llm" if source != "rule_based" else "rule_based"
 
+    is_static_table = bool(plan.get("is_static_table", False))
+    static_reasoning = str(plan.get("static_reasoning", "") or "")
+    static_rebuild_recommended = bool(plan.get("static_rebuild_recommended", False))
+
     return CleaningPlan(
         enabled_steps=enabled_steps,
         params=params,
         notes=notes,
         source=src,
         version=int(plan.get("version", 2)),
+        is_static_table=is_static_table,
+        static_reasoning=static_reasoning,
+        static_rebuild_recommended=static_rebuild_recommended,
     )
