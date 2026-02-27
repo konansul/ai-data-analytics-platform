@@ -136,10 +136,10 @@ def suggest_policy(dataset_id: str, mode: str = "rule_based", llm_model: str = "
     return resp.json()
 
 def run_cleaning(
-    dataset_id: str,
-    use_llm: bool = False,
-    llm_model: str = "gemini-2.5-flash",
-    overrides: Optional[Dict[str, Any]] = None,
+        dataset_id: str,
+        use_llm: bool = False,
+        llm_model: str = "gemini-2.5-flash",
+        overrides: Optional[Dict[str, Any]] = None,
 ) -> str:
     payload: Dict[str, Any] = {"dataset_id": dataset_id, "use_llm": use_llm, "llm_model": llm_model}
     if overrides:
@@ -196,3 +196,51 @@ def delete_run(run_id: str) -> Dict[str, Any]:
     )
     _raise(resp)
     return resp.json()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Visualization API helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_visualization_pairings(dataset_id: str, profile_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Stage 1 — fetch ranked column pairings from the Pairing Agent."""
+    resp = requests.post(
+        f"{API_BASE}/visualization/pairings",
+        json={"dataset_id": dataset_id, "profile_data": profile_data},
+        headers=_auth_headers(),
+        timeout=120,
+    )
+    _raise(resp)
+    return resp.json()
+
+
+def get_visualization_plots(
+        dataset_id: str,
+        profile_data: Dict[str, Any],
+        selected_pairings: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Stage 2 — fetch PlotConfigs for the user-selected pairings."""
+    resp = requests.post(
+        f"{API_BASE}/visualization/plots",
+        json={
+            "dataset_id": dataset_id,
+            "profile_data": profile_data,
+            "selected_pairings": selected_pairings,
+        },
+        headers=_auth_headers(),
+        timeout=120,
+    )
+    _raise(resp)
+    return resp.json()
+
+
+def explain_chart(plot_title: str, x_col: str, y_col: str) -> str:
+    """Plain-language insight for a rendered chart."""
+    resp = requests.post(
+        f"{API_BASE}/visualization/explain",
+        json={"plot_title": plot_title, "axis_info": f"X-Axis: {x_col}, Y-Axis: {y_col}"},
+        headers=_auth_headers(),
+        timeout=30,
+    )
+    if resp.status_code == 200:
+        return resp.json().get("explanation", "No explanation available.")
+    return f"Error: {resp.text}"

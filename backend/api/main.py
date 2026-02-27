@@ -10,8 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.database.db import engine
 from backend.database.models import Base
 
-from backend.api import datasets, profiling, policy, cleaning, auth
-
+from backend.api import datasets, profiling, policy, cleaning, auth, visualization
 app = FastAPI(title="Multi-Agent Excel Analytics API", version="1.0")
 
 app.add_middleware(
@@ -28,3 +27,4 @@ app.include_router(datasets.router, prefix="/v1", tags=["datasets"])
 app.include_router(profiling.router, prefix="/v1", tags=["profiling"])
 app.include_router(policy.router, prefix="/v1", tags=["policy"])
 app.include_router(cleaning.router, prefix="/v1", tags=["cleaning"])
+app.include_router(visualization.router, prefix="/v1", tags=["visualization"])

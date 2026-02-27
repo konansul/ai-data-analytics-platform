@@ -79,6 +79,34 @@ def _get_owned_dataset_or_404(db: Session, dataset_id: str, user_id: str) -> Dat
     return row
 
 
+# --- Internal Helper for Visualization Agent ---
+
+def load_dataset_as_dataframe(dataset_id: str) -> pd.DataFrame:
+    """
+    Internal Helper: Loads a dataset ID into a Pandas DataFrame.
+    Used by the Visualization Agent to calculate metrics (SD, R^2).
+    """
+    db_gen = get_db()
+    db = next(db_gen)
+
+    try:
+        # 2. Query the Dataset table
+        row = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
+        if not row:
+            raise ValueError(f"Dataset {dataset_id} not found")
+
+        key = row.current_parquet_key
+        if not key:
+            raise ValueError("Dataset file key is missing")
+
+        parquet_bytes = get_bytes(key)
+
+        # 4. Convert Bytes -> Pandas DataFrame
+        return pd.read_parquet(io.BytesIO(parquet_bytes))
+
+    finally:
+        db.close()
+
 @router.get("/datasets")
 def list_datasets(
     db: Session = Depends(get_db),
