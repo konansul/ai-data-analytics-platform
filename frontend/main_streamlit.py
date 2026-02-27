@@ -10,14 +10,9 @@ from ui._05_tab_forecasting import render_tab_forecasting
 from ui._06_save_all_files import render_tab_saved_datasets
 
 st.set_page_config(page_title="4CAST", layout="wide")
-st.title("4CAST — Data Cleaning and Analysis")
+st.title("4CAST — AI Data Cleaning, Visualization, and Forecasting Platform")
 st.caption(
-    "4CAST is an end-to-end system for transforming raw Excel and CSV files into clean, analysis-ready datasets. "
-    "The platform automatically ingests multi-sheet spreadsheets, profiles data quality, and identifies structural, statistical, and semantic issues. "
-    "It applies intelligent cleaning pipelines that combine deterministic rules with optional large language model cleaning_agent for context-aware decisions. "
-    "Throughout the process, 4CAST generates detailed signals and metadata describing missingness, outliers, distributions, and correlations. "
-    "The system preserves full reproducibility by storing cleaning runs, reports, and artifacts for every dataset and sheet. "
-)
+    "4CAST is an end-to-end data analytics platform for transforming raw Excel and CSV files into clean, analysis-ready datasets with automated visualization and time-series forecasting. The system provides user-scoped ingestion of multi-sheet spreadsheets, dataset profiling, rule-based and LLM-assisted cleaning pipelines, persistent execution history, and reproducible exports. On top of cleaned data, 4CAST generates intelligent visualization suggestions and executes forecasting workflows using a signal, planning, execution architecture. The backend is built with FastAPI and PostgreSQL for durable storage of datasets and runs, while the Streamlit frontend delivers an interactive workflow for ingestion, cleaning, exploration, visualization, and forecasting — all fully decoupled through REST APIs.")
 
 if "auth_token" not in st.session_state:
     st.session_state.auth_token = None
