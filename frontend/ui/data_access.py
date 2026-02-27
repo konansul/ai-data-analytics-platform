@@ -243,6 +243,7 @@ def forecast_run(
     version: str = "current",
     preview_rows: Optional[int] = None,
 ) -> Dict[str, Any]:
+
     payload: Dict[str, Any] = {
         "dataset_id": dataset_id,
         "version": version,
@@ -251,11 +252,25 @@ def forecast_run(
         "model": model,
         "preview_rows": int(preview_rows if preview_rows is not None else min(int(horizon), 500)),
     }
+
     resp = requests.post(
         f"{API_BASE}/forecast/run",
         json=payload,
         headers=_auth_headers(),
         timeout=TIMEOUT,
     )
+
     _raise(resp)
-    return resp.json()
+
+    data = resp.json()
+
+    # 🔥 ВАЖНО: сохранить forecast_run_id
+    frun_id = data.get("forecast_run_id")
+    if frun_id:
+        import streamlit as st
+        st.session_state["last_forecast_run_id"] = frun_id
+
+    return data
+
+def dataset_download_bytes(dataset_id: str, version: str, fmt: str = "csv") -> bytes:
+    return download_dataset(dataset_id=dataset_id, version=version, fmt=fmt)

@@ -4,41 +4,15 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from backend.api.models import RegisterRequest, LoginRequest, TokenResponse, UserMeResponse
-from backend.api.storage import new_id
+from backend.database.storage import new_id
 from backend.database.db import get_db
 from backend.database.models import User
-from backend.database.security import hash_password, verify_password, create_access_token, decode_token
-
+from backend.database.security import hash_password, verify_password, create_access_token
+from backend.api.helpers.ownership import get_current_user
 router = APIRouter()
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="v1/auth/login")
-
-def get_current_user(
-    db: Session = Depends(get_db),
-    token: str = Depends(oauth2_scheme),
-) -> User:
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        payload = decode_token(token)
-        user_id = payload.get("sub")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user: Optional[User] = db.query(User).filter(User.user_id == user_id).first()
-    if not user or not getattr(user, "is_active", True):
-        raise HTTPException(status_code=401, detail="User not found or inactive")
-
-    return user
-
 
 @router.post("/auth/register", response_model=UserMeResponse)
 def register(req: RegisterRequest, db: Session = Depends(get_db)):

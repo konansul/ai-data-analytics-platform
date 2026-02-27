@@ -3,11 +3,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, List, Tuple
 
+import io
+import base64
+import requests
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
+import copy
 
 from ui import data_access
 
+
+# -----------------------------
+# Small helpers (existing logic)
+# -----------------------------
 
 def _get_post_profile_from_runs_store(dataset_id: str) -> Optional[Dict[str, Any]]:
     item = st.session_state.get("runs_store", {}).get(dataset_id)
@@ -46,11 +55,6 @@ def _to_datetime_sorted(df: pd.DataFrame, dt_col: str) -> pd.DataFrame:
 
 
 def _build_wide_tables(results_list: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
-    """
-    Returns:
-      wide_yhat_df: dt + one column per target (yhat)
-      intervals_by_target: target -> df(dt, yhat, yhat_lower, yhat_upper) if available
-    """
     wide = None
     intervals: Dict[str, pd.DataFrame] = {}
 
@@ -98,11 +102,115 @@ def _build_wide_tables(results_list: List[Dict[str, Any]]) -> Tuple[pd.DataFrame
     return wide, intervals
 
 
+# -----------------------------
+# API calls (no need to touch data_access.py)
+# -----------------------------
+
+def _api_forecast_signals(*, dataset_id: str, version: str) -> Dict[str, Any]:
+    resp = requests.post(
+        f"{data_access.API_BASE}/forecast/signals",
+        json={"dataset_id": dataset_id, "version": version},
+        headers=data_access._auth_headers(),
+        timeout=120,
+    )
+    data_access._raise(resp)
+    return resp.json()
+
+
+def _api_forecast_plan(
+    *,
+    dataset_id: str,
+    version: str,
+    signals: Dict[str, Any],
+    profile: Optional[Dict[str, Any]],
+    user_intent: Optional[str],
+    max_targets: int,
+    head_rows: int,
+    horizon: int,
+) -> Dict[str, Any]:
+    payload = {
+        "dataset_id": dataset_id,
+        "version": version,
+        "signals": signals,
+        "profile": profile,
+        "user_intent": user_intent,
+        "max_targets": int(max_targets),
+        "head_rows": int(head_rows),
+        "horizon": int(horizon),
+    }
+    resp = requests.post(
+        f"{data_access.API_BASE}/forecast/plan",
+        json=payload,
+        headers=data_access._auth_headers(),
+        timeout=180,
+    )
+    data_access._raise(resp)
+    return resp.json()
+
+
+def _api_forecast_run(
+    *,
+    dataset_id: str,
+    version: str,
+    run_id: str,
+    plan: Dict[str, Any],
+    horizon: int,
+    model: str,
+    preview_rows: int = 50,
+) -> Dict[str, Any]:
+    payload = {
+        "dataset_id": dataset_id,
+        "run_id": run_id,
+        "plan": plan,
+        "model": model,
+        "version": version,
+        "horizon": int(horizon),
+        "preview_rows": int(preview_rows),
+    }
+    resp = requests.post(
+        f"{data_access.API_BASE}/forecast/run",
+        json=payload,
+        headers=data_access._auth_headers(),
+        timeout=600,
+    )
+    data_access._raise(resp)
+    return resp.json()
+
+
+def _api_save_forecast_plot(*, forecast_run_id: str, dataset_id: str, target: str, png_bytes: bytes) -> None:
+    payload = {
+        "forecast_run_id": forecast_run_id,
+        "dataset_id": dataset_id,
+        "target": target,
+        "png_base64": base64.b64encode(png_bytes).decode("utf-8"),
+    }
+    resp = requests.post(
+        f"{data_access.API_BASE}/forecast/plots",
+        json=payload,
+        headers=data_access._auth_headers(),
+        timeout=60,
+    )
+    data_access._raise(resp)
+
+
+# -----------------------------
+# Main tab
+# -----------------------------
+
 def render_tab_forecasting(dataset_id: str) -> None:
     st.subheader("Forecasting")
 
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    if not dataset_id:
+        st.info("Please upload/select a dataset first.")
+        return
 
+    if "last_run_id" not in st.session_state:
+        st.warning("No cleaning run found. Please run Data Cleaning first (Tab 2).")
+        return
+
+    run_id = st.session_state["last_run_id"]
+
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
     with col1:
         version = st.selectbox("Dataset version", ["current", "raw"], index=0)
     with col2:
@@ -120,153 +228,234 @@ def render_tab_forecasting(dataset_id: str) -> None:
 
     st.divider()
 
-    st.markdown("### 1. Forecast signals")
+    # One-button flow
+    c_run, c_reset = st.columns([1, 1])
+    with c_run:
+        run_btn = st.button("Generate forecast", type="primary")
+    with c_reset:
+        reset_btn = st.button("Reset forecast state")
 
-    if st.button("Generate forecast signals", type="primary"):
-        try:
-            signals = data_access.forecast_signals(dataset_id=dataset_id, version=version)
-            st.session_state["forecast_signals"] = signals
-            st.success("Signals generated.")
-        except Exception as e:
-            st.error(f"Signals error: {e}")
-            return
+    if reset_btn:
+        for k in ["forecast_signals", "forecast_plan", "forecast_result", "last_forecast_run_id"]:
+            if k in st.session_state:
+                del st.session_state[k]
+        st.success("Forecast state cleared.")
+        st.stop()
 
-    signals = st.session_state.get("forecast_signals")
-    if signals:
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("Feasible", _pretty_bool(signals.get("feasible")))
-        with c2:
-            st.metric("Frequency", str(signals.get("inferred_frequency", "unknown")))
-        with c3:
-            st.metric("Datetime candidates", len(signals.get("datetime_candidates") or []))
-        with c4:
-            st.metric("Targets", len(signals.get("numeric_target_candidates") or []))
+    if run_btn:
+        # clear previous result for clean UX
+        for k in ["forecast_signals", "forecast_plan", "forecast_result"]:
+            if k in st.session_state:
+                del st.session_state[k]
 
-        with st.expander("Signals JSON", expanded=False):
-            st.json(signals)
+        profile = _get_post_profile_from_runs_store(dataset_id)
 
-        if not signals.get("feasible"):
-            st.warning(
-                "This dataset does not look suitable for time-series forecasting: "
-                "no valid datetime column or no numeric target columns."
-            )
-            st.info("In this case forecasting can be skipped — the system will proceed to analysis/report without forecast.")
-            return
-    else:
-        st.info("Please click **Generate forecast signals** first.")
-        return
+        with st.spinner("Running forecasting pipeline (signals → plan → run)..."):
+            try:
+                signals = _api_forecast_signals(dataset_id=dataset_id, version=version)
+                st.session_state["forecast_signals"] = signals
 
-    st.divider()
+                # quick status metrics (no JSON)
+                feasible = bool(signals.get("feasible"))
+                if not feasible:
+                    st.warning(
+                        "This dataset is not suitable for forecasting "
+                        "(no valid datetime column or no numeric target columns)."
+                    )
+                    st.stop()
 
-    st.markdown("### 2. Forecast planning agent")
+                plan = _api_forecast_plan(
+                    dataset_id=dataset_id,
+                    version=version,
+                    signals=signals,
+                    profile=profile,
+                    user_intent=(user_intent.strip() or None),
+                    max_targets=int(max_targets),
+                    head_rows=10,
+                    horizon=int(horizon),
+                )
+                st.session_state["forecast_plan"] = plan
 
-    if st.button("Create forecast plan"):
-        try:
-            profile = _get_post_profile_from_runs_store(dataset_id)
-            plan = data_access.forecast_plan(
-                dataset_id=dataset_id,
-                version=version,
-                signals=signals,
-                profile=profile,
-                user_intent=user_intent or None,
-                head_rows=int(10),
-                max_targets=int(max_targets),
-            )
-            st.session_state["forecast_plan"] = plan
-            st.success("Plan created.")
-        except Exception as e:
-            st.error(f"Plan error: {e}")
-            return
+                if plan.get("mode") in {"skipped", "skip", "forecasting_skipped"} or not plan.get("suitable", True):
+                    st.warning("Planner decided to skip forecasting for this dataset.")
+                    st.stop()
 
-    plan = st.session_state.get("forecast_plan")
-    if plan:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Mode", str(plan.get("mode", "unknown")))
-        with c2:
-            st.metric("Datetime column", str(plan.get("datetime_column", "—")))
-        with c3:
-            st.metric("Targets", str(len(plan.get("targets") or [])))
+                # --- force UI parameters into plan (IMPORTANT) ---
+                plan_for_run = copy.deepcopy(plan)
 
-        with st.expander("Plan JSON", expanded=False):
-            st.json(plan)
+                # enforce max_targets on the plan
+                targets = plan_for_run.get("targets") or []
+                if isinstance(targets, list):
+                    plan_for_run["targets"] = targets[: int(max_targets)]
+                    for t in plan_for_run["targets"]:
+                        if isinstance(t, dict):
+                            t["horizon"] = int(horizon)
 
-        if plan.get("mode") in {"skip", "forecasting_skipped", "skipped"}:
-            st.warning("Planner decided to skip forecasting for this dataset.")
-            return
-    else:
-        st.info("Please click **Create forecast plan** first.")
-        return
+                result = _api_forecast_run(
+                    dataset_id=dataset_id,
+                    version=version,
+                    run_id=run_id,
+                    plan=plan_for_run,  # <-- use modified plan
+                    horizon=int(horizon),  # keep this too
+                    model=model,
+                    preview_rows=int(horizon),
+                )
+                st.session_state["forecast_result"] = result
 
-    st.divider()
+                frun_id = result.get("forecast_run_id") or ""
+                if frun_id:
+                    st.session_state["last_forecast_run_id"] = frun_id
 
-    st.markdown("### 3. Forecast run")
+                st.success("Forecast completed.")
 
-    if st.button("Run forecast"):
-        try:
-            result = data_access.forecast_run(
-                dataset_id=dataset_id,
-                version=version,
-                plan=plan,
-                horizon=int(horizon),
-                model=model,
-            )
-            st.session_state["forecast_result"] = result
-            st.success("Forecast executed.")
-        except Exception as e:
-            st.error(f"Run error: {e}")
-            return
+            except Exception as e:
+                st.error(f"Forecast failed: {e}")
+                st.stop()
 
+    # If nothing ran yet
     result = st.session_state.get("forecast_result")
     if not result:
-        st.info("Click **Run forecast** to get results.")
+        st.info("Click **Generate forecast** to run everything automatically.")
         return
-
-    with st.expander("Execution JSON", expanded=False):
-        st.json(result)
 
     results_list = result.get("results") or []
     if not isinstance(results_list, list) or len(results_list) == 0:
-        st.info("Execution returned empty results.")
+        st.info("Forecast returned empty results.")
         return
+
+    # Minimal summary (no JSON)
+    signals = st.session_state.get("forecast_signals") or {}
+    plan = st.session_state.get("forecast_plan") or {}
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Feasible", _pretty_bool(signals.get("feasible")))
+    with c2:
+        st.metric("Mode", str(plan.get("mode", "unknown")))
+    with c3:
+        st.metric("Datetime", str(plan.get("datetime_column", "—")))
+    with c4:
+        st.metric("Targets", str(len(plan.get("targets") or [])))
 
     wide_df, intervals_by_target = _build_wide_tables(results_list)
 
     st.markdown("### Forecast preview (yhat)")
     if wide_df.empty:
-        st.info("No preview data available to build combined table.")
+        st.info("No preview data available.")
         return
 
-    st.dataframe(wide_df, width='stretch')
+    st.dataframe(wide_df, width="stretch")
 
     if intervals_by_target:
-        with st.expander("Prediction intervals (yhat_lower / yhat_upper) — per target", expanded=False):
+        with st.expander("Prediction intervals (optional)", expanded=False):
             for target, idf in intervals_by_target.items():
                 st.markdown(f"**{target}**")
-                st.dataframe(idf, width='stretch')
-    else:
-        st.caption("Prediction intervals (yhat_lower/yhat_upper) were not returned by backend or model.")
+                st.dataframe(idf, width="stretch")
 
     st.divider()
-
     st.markdown("### Plots")
-    if "dt" not in wide_df.columns:
-        st.info("Could not find time column in combined table — cannot build plots.")
+
+    # Load historical dataset for overlay plot
+    try:
+        hist_csv_bytes = data_access.dataset_download_bytes(
+            dataset_id=dataset_id,
+            version=version,
+            fmt="csv",
+        )
+        hist_df = pd.read_csv(io.BytesIO(hist_csv_bytes))
+    except Exception as e:
+        st.error(f"Could not load historical dataset for plotting: {e}")
         return
 
-    plot_base = wide_df.copy()
-    plot_base["dt"] = pd.to_datetime(plot_base["dt"], errors="coerce")
-    plot_base = plot_base.dropna(subset=["dt"]).sort_values("dt")
+    dt_col_hist = plan.get("datetime_column") or "dt"
+    hist_dt_col = _pick_dt_col(hist_df) or dt_col_hist
+    if hist_dt_col not in hist_df.columns:
+        st.error(f"Could not find datetime column in historical dataset. Tried: {hist_dt_col}")
+        return
 
-    target_cols = [c for c in plot_base.columns if c != "dt"]
+    hist_df = _to_datetime_sorted(hist_df, hist_dt_col).rename(columns={hist_dt_col: "dt"})
+    if hist_df.empty:
+        st.info("Historical dataset is empty after datetime parsing — cannot plot.")
+        return
+
+    train_end_dt = hist_df["dt"].max()
+
+    plot_forecast = wide_df.copy()
+    plot_forecast["dt"] = pd.to_datetime(plot_forecast["dt"], errors="coerce")
+    plot_forecast = plot_forecast.dropna(subset=["dt"]).sort_values("dt")
+
+    target_cols = [c for c in plot_forecast.columns if c != "dt"]
     if not target_cols:
-        st.info("No target columns available for plotting.")
+        st.info("No target columns to plot.")
         return
+
+    st.caption(f"Train ends at: {train_end_dt.date()}")
+
+    frun_id = st.session_state.get("last_forecast_run_id")
+    if "saved_forecast_plots" not in st.session_state:
+        st.session_state["saved_forecast_plots"] = set()
 
     for tcol in target_cols:
         st.subheader(tcol)
+
+        train_part = None
+        if tcol in hist_df.columns:
+            train_part = hist_df[["dt", tcol]].rename(columns={tcol: "train"}).copy()
+            train_part = train_part[train_part["dt"] <= train_end_dt].dropna(subset=["dt", "train"])
+        else:
+            st.info(f"'{tcol}' not found in historical dataset — plotting forecast only.")
+
+        fc_part = plot_forecast[["dt", tcol]].rename(columns={tcol: "forecast"}).copy()
+        fc_part = fc_part[fc_part["dt"] > train_end_dt].dropna(subset=["dt", "forecast"])
+
+        if (train_part is None or train_part.empty) and fc_part.empty:
+            st.info("No data to plot for this target.")
+            continue
+
+        if train_part is None:
+            merged = fc_part.rename(columns={"forecast": "value"}).set_index("dt")
+            st.line_chart(merged)
+        else:
+            merged = pd.merge(train_part, fc_part, on="dt", how="outer").sort_values("dt").set_index("dt")
+            merged = merged[["train", "forecast"]]
+            st.line_chart(merged)
+
+        # Auto-save plot PNG to backend (once per target)
+        if not frun_id:
+            continue
+
+        plot_key = f"{frun_id}::{tcol}"
+        if plot_key in st.session_state["saved_forecast_plots"]:
+            continue
+
         try:
-            st.line_chart(plot_base.set_index("dt")[tcol])
-        except Exception:
-            st.dataframe(plot_base[["dt", tcol]],  width='stretch')
+            fig, ax = plt.subplots(figsize=(10, 4.5), dpi=150)
+
+            if train_part is not None and not train_part.empty:
+                ax.plot(train_part["dt"], train_part["train"], label="train", linewidth=2)
+
+            if not fc_part.empty:
+                ax.plot(fc_part["dt"], fc_part["forecast"], label="forecast", linewidth=2)
+
+            ax.axvline(train_end_dt, linestyle="--", linewidth=1)
+            ax.set_title(tcol)
+            ax.set_xlabel("Date")
+            ax.set_ylabel(tcol)
+            ax.grid(True, alpha=0.25)
+            ax.legend()
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", bbox_inches="tight", dpi=200)
+            plt.close(fig)
+
+            _api_save_forecast_plot(
+                forecast_run_id=frun_id,
+                dataset_id=dataset_id,
+                target=tcol,
+                png_bytes=buf.getvalue(),
+            )
+
+            st.session_state["saved_forecast_plots"].add(plot_key)
+
+        except Exception as e:
+            st.warning(f"Plot save failed for {tcol}: {e}")

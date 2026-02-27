@@ -2,384 +2,32 @@
 from __future__ import annotations
 
 import io
-import re
-from typing import Any, Dict, List, Literal, Optional
-
-import numpy as np
+import base64
+import json
 import pandas as pd
+
+from typing import Any, Dict, List
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.api.auth import get_current_user
 from backend.database.db import get_db
-from backend.database.models import Dataset, User
-from backend.database.storage import get_bytes
+
+from backend.database.storage import put_bytes, to_jsonable, new_id, forecast_prefix
+from backend.database.models import User, ForecastRun, Artifact
 
 from backend.app.forecasting.execution import run_forecast
-from backend.api.models import ForecastRunRequest, ForecastRunResponse, ForecastPlanRequest, ForecastPlanResponse, ForecastSignalsRequest, ForecastSignalsResponse, ForecastTargetIn, ForecastRunOneResult
+from backend.api.models import ForecastRunRequest, ForecastRunResponse, ForecastPlanRequest, ForecastPlanResponse, ForecastSignalsRequest, ForecastSignalsResponse, ForecastRunOneResult
+
+from backend.app.forecasting.helpers import numeric_target_candidates, try_llm_planning, grouping_candidates, infer_freq_label, letters_ratio, datetime_parse_success_ratio, fallback_plan, to_agent_signals
+from backend.api.helpers.ownership import get_owned_dataset_or_404, get_owned_clean_run_or_404, get_owned_forecast_run_or_404, get_owned_visualization_run_or_404
+from backend.api.helpers.datasets import load_dataset_df
+from backend.api.helpers.artifacts import add_artifact
+from backend.api.helpers.json_utils import json_safe_records
 
 router = APIRouter()
-
-
-def _get_owned_dataset_or_404(db: Session, dataset_id: str, user_id: str) -> Dataset:
-    row = (
-        db.query(Dataset)
-        .filter(Dataset.dataset_id == dataset_id, Dataset.user_id == user_id)
-        .first()
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    return row
-
-
-def load_dataset_as_dataframe(db: Session, dataset_id: str, user_id: str, *, version: Literal["raw", "current"] = "current",
-) -> pd.DataFrame:
-    ds = _get_owned_dataset_or_404(db, dataset_id, user_id)
-
-    if version == "raw":
-        key = getattr(ds, "raw_parquet_key", None)
-        if not key:
-            raise HTTPException(status_code=500, detail="raw_parquet_key is missing (migration needed)")
-    else:
-        key = ds.current_parquet_key
-
-    try:
-        parquet_bytes = get_bytes(key)
-        return pd.read_parquet(io.BytesIO(parquet_bytes))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read parquet: {e}")
-
-
-def _json_safe_records(df: pd.DataFrame, limit: int = 200) -> List[Dict[str, Any]]:
-    safe = df.where(pd.notnull(df), None).copy()
-
-    for c in safe.columns:
-        if pd.api.types.is_datetime64_any_dtype(safe[c]):
-            safe[c] = safe[c].apply(lambda x: x.isoformat() if x is not None else None)
-
-    out: List[Dict[str, Any]] = []
-    for row in safe.head(limit).to_dict(orient="records"):
-        cleaned: Dict[str, Any] = {}
-        for k, v in row.items():
-            # numpy scalar -> python scalar
-            if hasattr(v, "item") and callable(getattr(v, "item")):
-                try:
-                    cleaned[k] = v.item()
-                except Exception:
-                    cleaned[k] = v
-            else:
-                cleaned[k] = v
-        out.append(cleaned)
-    return out
-
-
-def _datetime_parse_success_ratio(s: pd.Series) -> float:
-    if s.empty:
-        return 0.0
-    parsed = pd.to_datetime(s, errors="coerce", utc=False)
-    return float(parsed.notna().mean())
-
-
-def _letters_ratio(s: pd.Series) -> float:
-    if s.empty:
-        return 0.0
-    ss = s.astype(str)
-    letters = ss.str.contains(r"[A-Za-zА-Яа-яƏəÖöÜüĞğÇçŞşıİ]", regex=True, na=False)
-    return float(letters.mean())
-
-
-def _infer_freq_label(dt_index: pd.DatetimeIndex) -> str:
-    try:
-        f = pd.infer_freq(dt_index)
-    except Exception:
-        f = None
-    if not f:
-        return "irregular"
-
-    f = f.upper()
-    if f.startswith("D"):
-        return "daily"
-    if f.startswith("W"):
-        return "weekly"
-    if f.startswith("M"):
-        return "monthly"
-    if f.startswith("Q"):
-        return "quarterly"
-    if f.startswith("A") or f.startswith("Y"):
-        return "yearly"
-    return "irregular"
-
-
-_ID_RE = re.compile(r"(^|[^a-z0-9])id([^a-z0-9]|$)", re.IGNORECASE)
-
-def _is_id_like(col: str) -> bool:
-    c = col.strip().lower()
-
-    if c in {"index", "row"}:
-        return True
-    if c.startswith("unnamed"):
-        return True
-
-    if _ID_RE.search(c):
-        return True
-
-    if "uuid" in c or "guid" in c:
-        return True
-
-    return False
-
-
-def _numeric_target_candidates(df: pd.DataFrame) -> List[str]:
-    numeric = df.select_dtypes(include=[np.number]).copy()
-
-    cands: List[str] = []
-    for col in numeric.columns:
-        s = numeric[col]
-        nunique = int(s.nunique(dropna=True))
-        notna = float(s.notna().mean())
-        is_id = _is_id_like(col)
-
-        if is_id:
-            print(" -> skip id_like")
-            continue
-        if nunique <= 1:
-            print(" -> skip constant")
-            continue
-        if notna < 0.2:
-            print(" -> skip sparse")
-            continue
-
-        cands.append(col)
-
-    return cands
-
-
-def _grouping_candidates(df: pd.DataFrame, max_cardinality: int = 50) -> List[str]:
-    cands: List[str] = []
-    for col in df.columns:
-        if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_datetime64_any_dtype(df[col]):
-            continue
-        nunique = int(df[col].nunique(dropna=True))
-        if 2 <= nunique <= max_cardinality:
-            cands.append(col)
-    return cands
-
-
-def _to_agent_signals(*, df: pd.DataFrame, signals: ForecastSignalsResponse, ) -> Dict[str, Any]:
-
-    dt_candidates = []
-    for c in signals.datetime_candidates or []:
-        dt_candidates.append(
-            {
-                "column": c.get("column"),
-                "success_ratio": float(c.get("success_ratio", 0.0) or 0.0),
-                "letters_ratio": float(c.get("letters_ratio", 0.0) or 0.0),
-            }
-        )
-
-    tgt_candidates = [{"column": col, "score": 1.0} for col in (signals.numeric_target_candidates or [])]
-
-    grp_candidates = []
-    for col in signals.grouping_candidates or []:
-        try:
-            card = int(df[col].nunique(dropna=True))
-        except Exception:
-            card = None
-        grp_candidates.append({"column": col, "cardinality": card, "score": 1.0})
-
-    reason = ""
-    feasible = bool(signals.feasible)
-    if not feasible:
-        if not dt_candidates:
-            reason = "No datetime candidates."
-        elif not tgt_candidates:
-            reason = "No numeric target candidates."
-        else:
-            reason = "Forecast not feasible by heuristic."
-
-    return {
-        "forecast_feasible": feasible,
-        "reason_if_not_feasible": reason,
-        "datetime_candidates": dt_candidates,
-        "target_candidates": tgt_candidates,
-        "grouping_candidates": grp_candidates,
-        "inferred_frequency": signals.inferred_frequency or "unknown",
-    }
-
-
-def _try_llm_planning(
-    *,
-    dataset_id: str,
-    df: pd.DataFrame,
-    df_head: pd.DataFrame,
-    signals: ForecastSignalsResponse,
-    profile: Optional[Dict[str, Any]],
-    user_intent: Optional[str],
-    max_targets: int,
-    head_rows: int,
-    horizon: int,
-) -> ForecastPlanResponse:
-
-    try:
-        from backend.app.forecasting.planning_agent import ForecastPlanningAgent
-    except Exception as e:
-        # if import fails, do fallback
-        fb = _fallback_plan(dataset_id=dataset_id, df=df, signals=signals, max_targets=max_targets)
-        fb.reasoning = f"Fallback: could not import ForecastPlanningAgent: {e}"
-        fb.reasons = [fb.reasoning]
-        fb.planner_source = "fallback"
-        fb.llm_model = None
-        return fb
-
-    agent_signals = _to_agent_signals(df=df, signals=signals)
-
-    report: Dict[str, Any] = {}
-    if isinstance(profile, dict) and profile:
-        report = {"post_profile": profile}
-
-    head_rows = max(1, min(int(head_rows), 50))
-
-    try:
-        agent = ForecastPlanningAgent()
-        plan_obj = agent.create_plan(
-            dataset_id=dataset_id,
-            df=df,
-            report=report,
-            forecast_signals=agent_signals,
-            user_intent=user_intent,
-            max_targets=max_targets,
-            head_rows=head_rows,
-            horizon=int(horizon)
-        )
-
-        plan_dict = plan_obj.model_dump() if hasattr(plan_obj, "model_dump") else dict(plan_obj)  # type: ignore
-
-        targets_in = []
-        for t in plan_dict.get("targets") or []:
-            targets_in.append(ForecastTargetIn(column=t.get("column"), horizon=int(t.get("horizon", 30) or 30)))
-
-        resp = ForecastPlanResponse(
-            dataset_id=dataset_id,
-            suitable=bool(plan_dict.get("suitable")),
-            mode=plan_dict.get("mode") or "skipped",
-            datetime_column=plan_dict.get("datetime_column"),
-            inferred_frequency=plan_dict.get("inferred_frequency") or signals.inferred_frequency,
-            group_by=plan_dict.get("group_by"),
-            targets=targets_in,
-            planner_source="llm",
-            llm_model=getattr(agent.llm, "model", None) or getattr(agent.llm, "model_name", None),
-            reasoning=plan_dict.get("reasoning") or "",
-            reasons=[],
-        )
-
-        if not resp.suitable:
-            resp.mode = "skipped"
-            resp.datetime_column = None
-            resp.targets = []
-            resp.group_by = None
-        if resp.mode == "grouped" and not resp.group_by:
-            resp.mode = "overall"
-
-        return resp
-
-    except Exception as e:
-        fb = _fallback_plan(dataset_id=dataset_id, df=df, signals=signals, max_targets=max_targets)
-        fb.planner_source = "fallback"
-        fb.llm_model = None
-        fb.reasoning = f"Fallback: LLM planning failed: {e}"
-        fb.reasons = [fb.reasoning]
-        return fb
-
-
-def _fallback_plan(
-    *,
-    dataset_id: str,
-    df: pd.DataFrame,
-    signals: ForecastSignalsResponse,
-    max_targets: int,
-    horizon: int,
-) -> ForecastPlanResponse:
-
-    reasons: List[str] = []
-
-    if not signals.datetime_candidates:
-        reasons.append("No datetime column candidates found. Forecasting skipped.")
-        return ForecastPlanResponse(
-            dataset_id=dataset_id,
-            suitable=False,
-            mode="skipped",
-            planner_source="fallback",
-            llm_model=None,
-            reasoning="; ".join(reasons),
-            reasons=reasons,
-        )
-
-    best = sorted(
-        signals.datetime_candidates,
-        key=lambda x: (x.get("success_ratio", 0.0), -x.get("letters_ratio", 1.0)),
-        reverse=True,
-    )[0]
-    dt_col = best.get("column")
-
-    if float(best.get("success_ratio", 0.0) or 0.0) < 0.8:
-        reasons.append(f"Best datetime candidate '{dt_col}' has low parse success ratio. Forecasting skipped.")
-        return ForecastPlanResponse(
-            dataset_id=dataset_id,
-            suitable=False,
-            mode="skipped",
-            datetime_column=dt_col,
-            inferred_frequency=signals.inferred_frequency,
-            planner_source="fallback",
-            llm_model=None,
-            reasoning="; ".join(reasons),
-            reasons=reasons,
-        )
-
-    if not signals.numeric_target_candidates:
-        reasons.append("No numeric target candidates found. Forecasting skipped.")
-        return ForecastPlanResponse(
-            dataset_id=dataset_id,
-            suitable=False,
-            mode="skipped",
-            datetime_column=dt_col,
-            inferred_frequency=signals.inferred_frequency,
-            planner_source="fallback",
-            llm_model=None,
-            reasoning="; ".join(reasons),
-            reasons=reasons,
-        )
-
-    targets = [
-        ForecastTargetIn(column=c, horizon=int(horizon))
-        for c in signals.numeric_target_candidates[:max_targets]
-    ]
-
-    mode: Literal["overall", "grouped"] = "overall"
-    group_by: Optional[str] = None
-
-    if signals.grouping_candidates:
-        g = signals.grouping_candidates[0]
-        try:
-            card = int(df[g].nunique(dropna=True))
-        except Exception:
-            card = 999999
-        if 2 <= card <= 30:
-            group_by = g
-            mode = "grouped"
-
-    return ForecastPlanResponse(
-        dataset_id=dataset_id,
-        suitable=True,
-        mode=mode,
-        datetime_column=dt_col,
-        inferred_frequency=signals.inferred_frequency,
-        group_by=group_by,
-        targets=targets,
-        planner_source="fallback",
-        llm_model=None,
-        reasoning="Fallback plan (deterministic).",
-        reasons=[],
-    )
 
 
 @router.post("/forecast/signals", response_model=ForecastSignalsResponse)
@@ -388,7 +36,13 @@ def forecast_signals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ForecastSignalsResponse:
-    df = load_dataset_as_dataframe(db, req.dataset_id, current_user.user_id, version=req.version)
+
+    df = load_dataset_df(
+        db=db,
+        dataset_id=req.dataset_id,
+        user_id=current_user.user_id,
+        version=req.version,
+    )
 
     candidates: List[Dict[str, Any]] = []
     for col in df.columns:
@@ -401,13 +55,13 @@ def forecast_signals(
         if pd.api.types.is_numeric_dtype(s) and ("date" not in col.lower() and "time" not in col.lower()):
             continue
 
-        success = _datetime_parse_success_ratio(s)
+        success = datetime_parse_success_ratio(s)
         if success >= 0.8:
             candidates.append(
                 {
                     "column": col,
                     "success_ratio": round(success, 4),
-                    "letters_ratio": round(_letters_ratio(s), 4),
+                    "letters_ratio": round(letters_ratio(s), 4),
                 }
             )
 
@@ -416,10 +70,10 @@ def forecast_signals(
         best = sorted(candidates, key=lambda x: x["success_ratio"], reverse=True)[0]
         dt = pd.to_datetime(df[best["column"]], errors="coerce", utc=False).dropna()
         if len(dt) >= 10:
-            inferred_frequency = _infer_freq_label(pd.DatetimeIndex(dt).sort_values())
+            inferred_frequency = infer_freq_label(pd.DatetimeIndex(dt).sort_values())
 
-    numeric_targets = _numeric_target_candidates(df)
-    groupings = _grouping_candidates(df, max_cardinality=50)
+    numeric_targets = numeric_target_candidates(df)
+    groupings = grouping_candidates(df, max_cardinality=50)
     feasible = bool(candidates) and bool(numeric_targets)
 
     return ForecastSignalsResponse(
@@ -435,7 +89,13 @@ def forecast_signals(
 @router.post("/forecast/plan", response_model=ForecastPlanResponse)
 def forecast_plan(req: ForecastPlanRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
 ) -> ForecastPlanResponse:
-    df = load_dataset_as_dataframe(db, req.dataset_id, current_user.user_id, version=req.version)
+
+    df = load_dataset_df(
+        db=db,
+        dataset_id=req.dataset_id,
+        user_id=current_user.user_id,
+        version=req.version,
+    )
 
     head_n = max(1, min(int(req.head_rows), 50))
     df_head = df.head(head_n)
@@ -443,7 +103,7 @@ def forecast_plan(req: ForecastPlanRequest, db: Session = Depends(get_db), curre
     max_targets = max(1, min(int(req.max_targets), 10))
 
 
-    return _try_llm_planning(
+    return try_llm_planning(
         dataset_id=req.dataset_id,
         df=df,
         df_head=df_head,
@@ -457,17 +117,60 @@ def forecast_plan(req: ForecastPlanRequest, db: Session = Depends(get_db), curre
 
 
 @router.post("/forecast/run", response_model=ForecastRunResponse)
-def forecast_run( req: ForecastRunRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+def forecast_run(
+    req: ForecastRunRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ForecastRunResponse:
     if req.plan.mode == "skipped" or not req.plan.suitable:
-        return ForecastRunResponse(dataset_id=req.dataset_id, results=[])
+        return ForecastRunResponse(
+            dataset_id=req.dataset_id,
+            run_id=req.run_id,
+            forecast_run_id="",
+            results=[],
+        )
 
     if not req.plan.datetime_column:
         raise HTTPException(status_code=400, detail="plan.datetime_column is required")
-
     if not req.plan.targets:
         raise HTTPException(status_code=400, detail="plan.targets must be non-empty")
-    df = load_dataset_as_dataframe(db, req.dataset_id, current_user.user_id, version=req.version)
+
+    ds = get_owned_dataset_or_404(db, req.dataset_id, current_user.user_id)
+    get_owned_clean_run_or_404(db, req.run_id, current_user.user_id)
+
+    df = load_dataset_df(
+        db=db,
+        dataset_id=req.dataset_id,
+        user_id=current_user.user_id,
+        version=req.version,
+    )
+
+    forecast_run_id = new_id("frun")
+    plan_json = req.plan.model_dump() if hasattr(req.plan, "model_dump") else req.plan.dict()
+
+    row = ForecastRun(
+        forecast_run_id=forecast_run_id,
+        user_id=current_user.user_id,
+        dataset_id=ds.dataset_id,
+        run_id=req.run_id,
+        status="running",
+        error=None,
+        model=req.model or "auto",
+        horizon=int(req.horizon),
+        datetime_column=req.plan.datetime_column,
+        targets=[t.column for t in (req.plan.targets or [])],
+        plan_json=to_jsonable(plan_json),
+        result_json={},
+        forecast_parquet_key=None,
+        forecast_json_key=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+
+    ds.forecast_status = "running"
+    ds.last_forecast_run_id = forecast_run_id
+    db.commit()
 
     override_h = int(req.horizon)
 
@@ -495,9 +198,146 @@ def forecast_run( req: ForecastRunRequest, db: Session = Depends(get_db), curren
             model=req.model,
         )
     except Exception as e:
+        row.status = "failed"
+        row.error = f"{type(e).__name__}: {e}"
+        row.updated_at = datetime.now(timezone.utc)
+        ds.forecast_status = "failed"
+        db.commit()
         raise HTTPException(status_code=500, detail=f"Forecast execution failed: {e}")
 
-    preview_n = max(1, min(int(req.preview_rows), 500))
+    prefix = forecast_prefix(current_user.user_id, req.run_id, forecast_run_id)
+    result_json_key = f"{prefix}/result.json"
+    wide_parquet_key = f"{prefix}/forecast_wide.parquet"
+    wide_csv_key = f"{prefix}/forecast_wide.csv"
+
+    wide = None
+    safe_results_meta: List[Dict[str, Any]] = []
+
+    try:
+        for r in results:
+            safe_results_meta.append(
+                to_jsonable({
+                    "target": r.target,
+                    "mode": r.mode,
+                    "model_used": r.model_used,
+                    "datetime_column": r.datetime_column,
+                    "group_by": r.group_by,
+                    "horizon": r.horizon,
+                    "frequency": r.frequency,
+                    "meta": r.meta,
+                })
+            )
+
+            fdf = r.forecast_df.copy()
+
+            dt_col = r.datetime_column
+            if dt_col not in fdf.columns:
+                if "dt" in fdf.columns:
+                    dt_col = "dt"
+                elif "ds" in fdf.columns:
+                    dt_col = "ds"
+                else:
+                    continue
+
+            if "yhat" not in fdf.columns:
+                continue
+
+            part = fdf[[dt_col, "yhat"]].rename(columns={dt_col: "dt", "yhat": r.target})
+            part["dt"] = pd.to_datetime(part["dt"], errors="coerce")
+            part = part.dropna(subset=["dt"]).sort_values("dt")
+
+            if wide is None:
+                wide = part
+            else:
+                wide = wide.merge(part, on="dt", how="outer")
+
+        if wide is None:
+            wide = pd.DataFrame()
+
+        payload = to_jsonable({
+            "forecast_run_id": forecast_run_id,
+            "run_id": req.run_id,
+            "dataset_id": req.dataset_id,
+            "user_id": current_user.user_id,
+            "version": req.version,
+            "model": req.model,
+            "horizon": int(req.horizon),
+            "plan": plan_json,
+            "results_meta": safe_results_meta,
+        })
+
+        put_bytes(result_json_key, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+
+        bufp = io.BytesIO()
+        wide.to_parquet(bufp, index=False)
+        put_bytes(wide_parquet_key, bufp.getvalue())
+
+        put_bytes(wide_csv_key, wide.to_csv(index=False).encode("utf-8"))
+
+    except Exception as e:
+        row.status = "failed"
+        row.error = f"Persist failed: {type(e).__name__}: {e}"
+        row.updated_at = datetime.now(timezone.utc)
+        ds.forecast_status = "failed"
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to persist forecast artifacts: {e}")
+
+    try:
+        add_artifact(
+            db,
+            user_id=current_user.user_id,
+            dataset_id=ds.dataset_id,
+            run_type="forecast",
+            run_id=forecast_run_id,
+            kind="forecast_result_json",
+            mime_type="application/json",
+            storage_key=result_json_key,
+        )
+        add_artifact(
+            db,
+            user_id=current_user.user_id,
+            dataset_id=ds.dataset_id,
+            run_type="forecast",
+            run_id=forecast_run_id,
+            kind="forecast_wide_parquet",
+            mime_type="application/octet-stream",
+            storage_key=wide_parquet_key,
+        )
+        add_artifact(
+            db,
+            user_id=current_user.user_id,
+            dataset_id=ds.dataset_id,
+            run_type="forecast",
+            run_id=forecast_run_id,
+            kind="forecast_wide_csv",
+            mime_type="text/csv",
+            storage_key=wide_csv_key,
+        )
+
+        row.status = "done"
+        row.updated_at = datetime.now(timezone.utc)
+        row.forecast_json_key = result_json_key
+        row.forecast_parquet_key = wide_parquet_key
+        row.result_json = to_jsonable({
+            "result_json_key": result_json_key,
+            "wide_parquet_key": wide_parquet_key,
+            "wide_csv_key": wide_csv_key,
+        })
+
+        ds.forecast_status = "done"
+        ds.last_forecast_run_id = forecast_run_id
+        ds.forecasted_at = datetime.now(timezone.utc)
+        db.commit()
+
+    except Exception as e:
+        row.status = "failed"
+        row.error = f"Artifact registry failed: {type(e).__name__}: {e}"
+        row.updated_at = datetime.now(timezone.utc)
+        ds.forecast_status = "failed"
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to register forecast artifacts: {e}")
+
+    preview_n = max(1, min(int(req.preview_rows or 50), 500))
 
     out: List[ForecastRunOneResult] = []
     for r in results:
@@ -510,9 +350,60 @@ def forecast_run( req: ForecastRunRequest, db: Session = Depends(get_db), curren
                 group_by=r.group_by,
                 horizon=r.horizon,
                 frequency=r.frequency,
-                preview=_json_safe_records(r.forecast_df, limit=preview_n),
+                preview= json_safe_records(r.forecast_df, limit=preview_n),
                 meta=r.meta,
             )
         )
 
-    return ForecastRunResponse(dataset_id=req.dataset_id, results=out)
+    return ForecastRunResponse(
+        dataset_id=req.dataset_id,
+        run_id=req.run_id,
+        forecast_run_id=forecast_run_id,
+        results=out,
+    )
+
+
+@router.post("/forecast/plots")
+def save_forecast_plot(
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    forecast_run_id = payload["forecast_run_id"]
+    dataset_id = payload["dataset_id"]
+    target = payload.get("target", "unknown")
+    png_b64 = payload["png_base64"]
+
+    fr = get_owned_forecast_run_or_404(db, forecast_run_id, current_user.user_id)
+
+    if not fr.run_id:
+        raise HTTPException(status_code=400, detail="ForecastRun.run_id is missing (cannot place plot under runs/<run_id>)")
+
+    try:
+        png = base64.b64decode(png_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid png_base64")
+
+    prefix = forecast_prefix(current_user.user_id, fr.run_id, forecast_run_id)
+    key = f"{prefix}/plots/{target}.png"
+
+    put_bytes(key, png, content_type="image/png")
+
+    artifact = Artifact(
+        artifact_id=new_id("art"),
+        user_id=current_user.user_id,
+        dataset_id=dataset_id,
+        run_type="forecast",
+        run_id=forecast_run_id,
+        kind="forecast_plot_png",
+        mime_type="image/png",
+        bucket="local",
+        storage_key=key,
+        meta={"target": target, "run_id": fr.run_id},
+        created_at=datetime.now(timezone.utc)
+    )
+
+    db.add(artifact)
+    db.commit()
+
+    return {"ok": True, "storage_key": key}

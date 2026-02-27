@@ -111,30 +111,25 @@ class ForecastTargetIn(BaseModel):
 
 class ForecastPlanResponse(BaseModel):
     dataset_id: str
-
     suitable: bool
     mode: Literal["overall", "grouped", "skipped"]
-
     datetime_column: Optional[str] = None
     inferred_frequency: Optional[str] = None
     group_by: Optional[str] = None
     targets: List[ForecastTargetIn] = Field(default_factory=list)
-
     planner_source: Literal["llm", "fallback"] = "fallback"
     llm_model: Optional[str] = None
     reasoning: str = ""
-
     reasons: List[str] = Field(default_factory=list)
 
 
 class ForecastRunRequest(BaseModel):
     dataset_id: str
+    run_id: str
     plan: ForecastPlanResponse
     model: Literal["auto", "arima", "prophet", "random_forest"] = "auto"
     version: Literal["raw", "current"] = "current"
-
     horizon: int = Field(default=30, ge=1, le=3650)
-
     preview_rows: int = 50
 
 
@@ -152,4 +147,11 @@ class ForecastRunOneResult(BaseModel):
 
 class ForecastRunResponse(BaseModel):
     dataset_id: str
+    run_id: str
+    forecast_run_id: str
     results: List[ForecastRunOneResult]
+
+class VizRequest(BaseModel):
+    dataset_id: str
+    run_id: str
+    profile_data: Dict[str, Any]

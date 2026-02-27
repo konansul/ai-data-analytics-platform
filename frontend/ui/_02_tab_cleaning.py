@@ -158,6 +158,8 @@ def _render_multi_file_cleaning_block(files_registry: Dict[str, Any]) -> None:
                 run_id_i = run_cleaning(ds_id, use_llm=use_llm_all_files, llm_model=llm_model_all_files)
                 report_i = get_run_report(run_id_i)
 
+                st.session_state["last_run_id"] = run_id_i
+
                 if "runs_store" not in st.session_state or not isinstance(st.session_state.runs_store, dict):
                     st.session_state.runs_store = {}
 
@@ -277,6 +279,8 @@ def render_tab_cleaning(file_name: str, sheet_meta: dict, dataset_id: str):
                     run_id_i = run_cleaning(ds_id, use_llm=use_llm_all, llm_model=llm_model_all)
                     report_i = get_run_report(run_id_i)
 
+                    st.session_state["last_run_id"] = run_id_i
+
                     if "runs_store" not in st.session_state or not isinstance(st.session_state.runs_store, dict):
                         st.session_state.runs_store = {}
 
@@ -360,6 +364,8 @@ def render_tab_cleaning(file_name: str, sheet_meta: dict, dataset_id: str):
 
                 run_id = run_cleaning(dataset_id, use_llm=use_llm, llm_model=llm_model)
                 report = get_run_report(run_id)
+
+                st.session_state["last_run_id"] = run_id
 
                 if "runs_store" not in st.session_state or not isinstance(st.session_state.runs_store, dict):
                     st.session_state.runs_store = {}

@@ -1,10 +1,10 @@
-# backend/api/cleaning_steps.py
+# backend/api/cleaning.py
 from __future__ import annotations
 
 import io
 import json
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 
 import pandas as pd
@@ -13,34 +13,19 @@ from sqlalchemy.orm import Session
 
 from backend.api.auth import get_current_user
 from backend.api.models import CleaningRunRequest, CleaningRunResponse
-from backend.api.storage import new_id
 
 from backend.app.cleaning.cleaning_steps.main_pipeline import run_cleaning_pipeline
 
-from backend.database.storage import get_bytes, put_bytes, delete_key, to_jsonable
+from backend.database.storage import get_bytes, put_bytes, delete_key, to_jsonable, new_id, run_prefix
 from backend.database.db import get_db
 from backend.database.models import Dataset, CleaningRun, User
+
+from backend.api.helpers.ownership import get_owned_dataset_or_404
 
 from fastapi.responses import StreamingResponse
 router = APIRouter()
 
 LOCAL_BUCKET_NAME = "local"
-
-
-def _run_prefix(user_id: str, run_id: str) -> str:
-    return f"users/{user_id}/runs/{run_id}"
-
-
-def _owned_dataset_or_404(db: Session, dataset_id: str, user_id: str) -> Dataset:
-    ds = (
-        db.query(Dataset)
-        .filter(Dataset.dataset_id == dataset_id, Dataset.user_id == user_id)
-        .first()
-    )
-    if not ds:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    return ds
-
 
 @router.get("/cleaning/runs")
 def list_my_runs(
@@ -81,7 +66,7 @@ def run_cleaning(
     current_user: User = Depends(get_current_user),
 ):
 
-    ds = _owned_dataset_or_404(db, req.dataset_id, current_user.user_id)
+    ds = get_owned_dataset_or_404(db, req.dataset_id, current_user.user_id)
 
     try:
         parquet_bytes = get_bytes(ds.current_parquet_key)
@@ -117,8 +102,8 @@ def run_cleaning(
         dataset_id=ds.dataset_id,
         status="running",
         bucket=LOCAL_BUCKET_NAME,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(run_row)
     db.commit()
@@ -128,7 +113,7 @@ def run_cleaning(
     except Exception as e:
         run_row.status = "failed"
         run_row.error = str(e)
-        run_row.updated_at = datetime.utcnow()
+        run_row.updated_at = datetime.now(timezone.utc)
         db.commit()
 
         raise HTTPException(
@@ -140,7 +125,7 @@ def run_cleaning(
             },
         )
 
-    prefix = _run_prefix(current_user.user_id, run_id)
+    prefix = run_prefix(current_user.user_id, run_id)
     report_key = f"{prefix}/report.json"
     cleaned_parquet_key = f"{prefix}/cleaned.parquet"
     cleaned_xlsx_key = f"{prefix}/cleaned.xlsx"
@@ -162,7 +147,7 @@ def run_cleaning(
     except Exception as e:
         run_row.status = "failed"
         run_row.error = f"Persist failed: {e}"
-        run_row.updated_at = datetime.utcnow()
+        run_row.updated_at = datetime.now(timezone.utc)
         db.commit()
         raise HTTPException(status_code=500, detail=f"Failed to persist artifacts: {e}")
 
@@ -172,15 +157,13 @@ def run_cleaning(
         clean_df.to_parquet(buf2, index=False)
         put_bytes(ds.current_parquet_key, buf2.getvalue())
     except Exception:
-        # не критично
         pass
 
-    # 8) финальный commit в БД
     run_row.status = "done"
     run_row.report_key = report_key
     run_row.cleaned_parquet_key = cleaned_parquet_key
     run_row.cleaned_xlsx_key = cleaned_xlsx_key
-    run_row.updated_at = datetime.utcnow()
+    run_row.updated_at = datetime.now(timezone.utc)
     db.commit()
 
     return {"run_id": run_id}

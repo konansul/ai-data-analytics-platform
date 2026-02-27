@@ -26,3 +26,17 @@ class ExplainRequest(BaseModel):
 #  Response Schema for /explain ---
 class ExplainResponse(BaseModel):
     explanation: str
+
+class SaveVizPlotRequest(BaseModel):
+    run_id: str
+    viz_run_id: str
+    dataset_id: str
+    title: str
+    plot_type: str
+    png_base64: str
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+class VizRequest(BaseModel):
+    dataset_id: str
+    run_id: str
+    profile_data: Dict[str, Any]

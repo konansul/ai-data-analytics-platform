@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import os
+import io
+import json
+import uuid
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
 import numpy as np
 import pandas as pd
-
-from pathlib import Path
-from typing import Any, Optional
-from datetime import date, datetime
-
 
 BLOB_DIR = Path(os.getenv("LOCAL_BLOB_DIR", "storage")).resolve()
 
@@ -36,6 +38,8 @@ def _full_path(key: str) -> Path:
 
     return path
 
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 def put_bytes(key: str, data: bytes, content_type: Optional[str] = None) -> None:
     ensure_blob_dir()
@@ -64,7 +68,6 @@ def delete_key(key: str) -> None:
         path.unlink()
 
 def to_jsonable(x: Any) -> Any:
-    # Recursively convert objects to JSON-serializable python types
     if x is None:
         return None
 
@@ -96,3 +99,135 @@ def to_jsonable(x: Any) -> Any:
         return [to_jsonable(v) for v in x.tolist()]
 
     return x
+
+
+def put_text(key: str, text: str, encoding: str = "utf-8") -> None:
+    put_bytes(key, text.encode(encoding))
+
+
+def get_text(key: str, encoding: str = "utf-8") -> str:
+    return get_bytes(key).decode(encoding)
+
+
+def put_json(key: str, obj: Any, *, indent: int = 2) -> None:
+    payload = json.dumps(to_jsonable(obj), ensure_ascii=False, indent=indent).encode("utf-8")
+    put_bytes(key, payload, content_type="application/json")
+
+
+def get_json(key: str) -> Any:
+    return json.loads(get_text(key))
+
+
+def put_df_parquet(key: str, df: pd.DataFrame) -> None:
+    bio = io.BytesIO()
+    df.to_parquet(bio, index=False)
+    put_bytes(key, bio.getvalue(), content_type="application/octet-stream")
+
+
+def get_df_parquet(key: str) -> pd.DataFrame:
+    return pd.read_parquet(io.BytesIO(get_bytes(key)))
+
+
+def put_df_csv(key: str, df: pd.DataFrame) -> None:
+    bio = io.StringIO()
+    df.to_csv(bio, index=False)
+    put_text(key, bio.getvalue())
+
+
+def user_root(user_id: str) -> str:
+    return f"users/{user_id}"
+
+
+def dataset_root(user_id: str, dataset_id: str) -> str:
+    return f"{user_root(user_id)}/datasets/{dataset_id}"
+
+
+def dataset_key(user_id: str, dataset_id: str, filename: str) -> str:
+    return f"{dataset_root(user_id, dataset_id)}/{filename}"
+
+
+def runs_root(user_id: str) -> str:
+    return f"{user_root(user_id)}/runs"
+
+
+def run_root(user_id: str, run_id: str) -> str:
+    return f"{runs_root(user_id)}/{run_id}"
+
+
+def run_key(user_id: str, run_id: str, filename: str) -> str:
+    return f"{run_root(user_id, run_id)}/{filename}"
+
+
+def stage_root(user_id: str, run_id: str, stage: str) -> str:
+    stage = (stage or "").strip().lower()
+    if stage not in {"cleaning", "viz", "forecast", "report"}:
+        raise ValueError(f"Invalid stage: {stage}")
+    return f"{run_root(user_id, run_id)}/{stage}"
+
+
+def stage_key(user_id: str, run_id: str, stage: str, filename: str) -> str:
+    return f"{stage_root(user_id, run_id, stage)}/{filename}"
+
+
+def cleaning_root(user_id: str, run_id: str) -> str:
+    return stage_root(user_id, run_id, "cleaning")
+
+
+def cleaning_key(user_id: str, run_id: str, filename: str) -> str:
+    return stage_key(user_id, run_id, "cleaning", filename)
+
+
+def viz_root(user_id: str, run_id: str) -> str:
+    return stage_root(user_id, run_id, "viz")
+
+
+def viz_key(user_id: str, run_id: str, filename: str) -> str:
+    return stage_key(user_id, run_id, "viz", filename)
+
+
+def viz_plot_key(user_id: str, run_id: str, filename: str) -> str:
+    return f"{viz_root(user_id, run_id)}/plots/{filename}"
+
+
+def forecast_root(user_id: str, run_id: str) -> str:
+    return stage_root(user_id, run_id, "forecast")
+
+
+def forecast_key(user_id: str, run_id: str, filename: str) -> str:
+    return stage_key(user_id, run_id, "forecast", filename)
+
+
+def forecast_plot_key(user_id: str, run_id: str, filename: str) -> str:
+    return f"{forecast_root(user_id, run_id)}/plots/{filename}"
+
+
+def report_root(user_id: str, run_id: str) -> str:
+    return stage_root(user_id, run_id, "report")
+
+
+def report_key(user_id: str, run_id: str, filename: str) -> str:
+    return stage_key(user_id, run_id, "report", filename)
+
+
+def dataset_prefix(user_id: str, dataset_id: str) -> str:
+    return f"users/{user_id}/datasets/{dataset_id}"
+
+
+def run_prefix(user_id: str, run_id: str) -> str:
+    return f"users/{user_id}/runs/{run_id}"
+
+
+def cleaning_prefix(user_id: str, run_id: str) -> str:
+    return f"{run_prefix(user_id, run_id)}/cleaning"
+
+
+def profile_prefix(user_id: str, profile_id: str) -> str:
+    return f"users/{user_id}/profiles/{profile_id}"
+
+
+def viz_prefix(user_id: str, run_id: str) -> str:
+    return f"{run_prefix(user_id, run_id)}/viz"
+
+
+def forecast_prefix(user_id: str, run_id: str, forecast_run_id: str) -> str:
+    return f"{run_prefix(user_id, run_id)}/forecast/{forecast_run_id}"
