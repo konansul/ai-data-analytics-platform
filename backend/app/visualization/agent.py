@@ -50,7 +50,7 @@ class VisualizationAgent:
             self,
             dataset_id: str,
             profile: Dict[str, Any],
-            metrics: Dict[str, Any] | None = None,
+            metrics: Optional[Dict[str, Any]] = None,
     ) -> VisualizationPlan:
         """
         Runs both stages and returns a VisualizationPlan that includes both
@@ -101,7 +101,7 @@ class VisualizationAgent:
             self,
             dataset_id: str,
             profile: Dict[str, Any],
-            metrics: Dict[str, Any] | None = None,
+            metrics: Optional[Dict[str, Any]] = None,
     ) -> "ColumnPairingPlan":
         """
         Stage 1 only — returns ranked column pairings without selecting plot types.
@@ -118,7 +118,7 @@ class VisualizationAgent:
             dataset_id: str,
             profile: Dict[str, Any],
             selected_pairings: list,
-            metrics: Dict[str, Any] | None = None,
+            metrics: Optional[Dict[str, Any]] = None,
     ) -> List[PlotConfig]:
         """
         Stage 2 only — takes user-selected pairings and returns PlotConfigs.
