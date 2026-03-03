@@ -135,10 +135,10 @@ def suggest_policy(dataset_id: str, mode: str = "rule_based", llm_model: str = "
     return resp.json()
 
 def run_cleaning(
-    dataset_id: str,
-    use_llm: bool = False,
-    llm_model: str = "gemini-2.5-flash",
-    overrides: Optional[Dict[str, Any]] = None,
+        dataset_id: str,
+        use_llm: bool = False,
+        llm_model: str = "gemini-2.5-flash",
+        overrides: Optional[Dict[str, Any]] = None,
 ) -> str:
     payload: Dict[str, Any] = {"dataset_id": dataset_id, "use_llm": use_llm, "llm_model": llm_model}
     if overrides:
@@ -196,81 +196,113 @@ def delete_run(run_id: str) -> Dict[str, Any]:
     _raise(resp)
     return resp.json()
 
-def forecast_signals(dataset_id: str, version: str = "current") -> Dict[str, Any]:
+def get_visualization_pairings(dataset_id: str, profile_data: Dict[str, Any]) -> Dict[str, Any]:
     resp = requests.post(
-        f"{API_BASE}/forecast/signals",
-        json={"dataset_id": dataset_id, "version": version},
+        f"{API_BASE}/visualization/pairings",
+        json={"dataset_id": dataset_id, "profile_data": profile_data},
         headers=_auth_headers(),
-        timeout=TIMEOUT,
+        timeout=120,
     )
     _raise(resp)
     return resp.json()
 
 
-def forecast_plan(
+def get_visualization_plots(dataset_id: str, profile_data: Dict[str, Any], selected_pairings: List[Dict[str, Any]],) -> List[Dict[str, Any]]:
+    resp = requests.post(
+        f"{API_BASE}/visualization/plots",
+        json={
+            "dataset_id": dataset_id,
+            "profile_data": profile_data,
+            "selected_pairings": selected_pairings,
+        },
+        headers=_auth_headers(),
+        timeout=120,
+    )
+    _raise(resp)
+    return resp.json()
+
+
+def explain_chart(plot_title: str, x_col: str, y_col: str) -> str:
+    resp = requests.post(
+        f"{API_BASE}/visualization/explain",
+        json={"plot_title": plot_title, "axis_info": f"X-Axis: {x_col}, Y-Axis: {y_col}"},
+        headers=_auth_headers(),
+        timeout=30,
+    )
+    if resp.status_code == 200:
+        return resp.json().get("explanation", "No explanation available.")
+    return f"Error: {resp.text}"
+
+
+def _api_forecast_signals(*, dataset_id: str, version: str) -> Dict[str, Any]:
+    resp = requests.post(
+        f"{API_BASE}/forecast/signals",
+        json={"dataset_id": dataset_id, "version": version},
+        headers=_auth_headers(),
+        timeout=120,
+    )
+    _raise(resp)
+    return resp.json()
+
+
+def _api_forecast_plan(
+    *,
     dataset_id: str,
+    version: str,
     signals: Dict[str, Any],
-    profile: Optional[Dict[str, Any]] = None,
-    user_intent: Optional[str] = None,
-    head_rows: int = 10,
-    max_targets: int = 3,
-    version: str = "current",
+    profile: Optional[Dict[str, Any]],
+    user_intent: Optional[str],
+    max_targets: int,
+    head_rows: int,
+    horizon: int,
 ) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
+    payload = {
         "dataset_id": dataset_id,
         "version": version,
         "signals": signals,
         "profile": profile,
         "user_intent": user_intent,
-        "head_rows": int(head_rows),
         "max_targets": int(max_targets),
+        "head_rows": int(head_rows),
+        "horizon": int(horizon),
     }
     resp = requests.post(
         f"{API_BASE}/forecast/plan",
         json=payload,
         headers=_auth_headers(),
-        timeout=TIMEOUT,
+        timeout=180,
     )
     _raise(resp)
     return resp.json()
 
 
-def forecast_run(
+def _api_forecast_run(
+    *,
     dataset_id: str,
+    version: str,
+    run_id: str,
     plan: Dict[str, Any],
-    horizon: int = 30,
-    model: str = "auto",
-    version: str = "current",
-    preview_rows: Optional[int] = None,
+    horizon: int,
+    model: str,
+    preview_rows: int = 50,
 ) -> Dict[str, Any]:
-
-    payload: Dict[str, Any] = {
+    payload = {
         "dataset_id": dataset_id,
-        "version": version,
+        "run_id": run_id,
         "plan": plan,
-        "horizon": int(horizon),
         "model": model,
-        "preview_rows": int(preview_rows if preview_rows is not None else min(int(horizon), 500)),
+        "version": version,
+        "horizon": int(horizon),
+        "preview_rows": int(preview_rows),
     }
-
     resp = requests.post(
         f"{API_BASE}/forecast/run",
         json=payload,
         headers=_auth_headers(),
-        timeout=TIMEOUT,
+        timeout=600,
     )
-
     _raise(resp)
-
-    data = resp.json()
-
-    # 🔥 ВАЖНО: сохранить forecast_run_id
-    frun_id = data.get("forecast_run_id")
-    if frun_id:
-        import streamlit as st
-        st.session_state["last_forecast_run_id"] = frun_id
-
-    return data
+    return resp.json()
 
 def dataset_download_bytes(dataset_id: str, version: str, fmt: str = "csv") -> bytes:
     return download_dataset(dataset_id=dataset_id, version=version, fmt=fmt)

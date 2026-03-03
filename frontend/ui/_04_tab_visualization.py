@@ -1,114 +1,115 @@
 # frontend/ui/_04_tab_visualization.py
+from __future__ import annotations
 
-import base64
 from io import BytesIO
 
 import pandas as pd
 import plotly.express as px
-import requests
 import streamlit as st
 
-from ui.data_access import API_BASE, _auth_headers, _raise, download_dataset
+from ui.data_access import download_dataset, get_visualization_plots, explain_chart
 
+def _render_plot(plot_cfg: dict, df: pd.DataFrame, slot_key: str):
+    title       = plot_cfg.get("title", "Plot")
+    description = plot_cfg.get("description", "")
+    ptype       = plot_cfg.get("plot_type")
+    alt_ptype   = plot_cfg.get("alt_plot_type")
+    x           = plot_cfg.get("x_column")
+    y           = plot_cfg.get("y_column")
+    color       = plot_cfg.get("color_column")
+    constraints = plot_cfg.get("constraints") or {}
+    warnings    = plot_cfg.get("warnings") or []
+    source      = plot_cfg.get("source_pairing")
 
-# -----------------------------
-# API HELPERS
-# -----------------------------
+    h1, h2 = st.columns([6, 2])
+    with h1:
+        st.subheader(title)
+        if description:
+            st.caption(description)
+    with h2:
+        if source:
+            st.caption(f"🔗 `{' + '.join(source)}`")
+        if alt_ptype:
+            st.caption(f"Alt: `{alt_ptype}`")
 
-def save_viz_plot_api(
-    viz_run_id: str,
-    dataset_id: str,
-    plot_index: int,
-    title: str,
-    plot_type: str,
-    fig,
-) -> dict:
+    for w in warnings:
+        st.warning(f"⚠️ {w}")
 
-    if "last_run_id" not in st.session_state:
-        raise RuntimeError("Cleaning run_id missing in session_state")
+    try:
+        plot_df = df.copy()
 
-    png_bytes = fig.to_image(format="png", scale=2)
+        if constraints.get("top_k") and x:
+            top_k = int(constraints["top_k"])
+            top_cats = (
+                plot_df.groupby(x)[y].sum().nlargest(top_k).index
+                if y else
+                plot_df[x].value_counts().nlargest(top_k).index
+            )
+            plot_df = plot_df[plot_df[x].isin(top_cats)]
 
-    payload = {
-        "run_id": st.session_state["last_run_id"],  # cleaning run id
-        "viz_run_id": viz_run_id,
-        "dataset_id": dataset_id,
-        "title": title,
-        "plot_type": plot_type,
-        "png_base64": base64.b64encode(png_bytes).decode("utf-8"),
-        "meta": {
-            "plot_index": plot_index
-        },
-    }
+        fig = None
+        if ptype == "bar":
+            fig = px.bar(plot_df, x=x, y=y, color=color, title=title)
 
-    resp = requests.post(
-        f"{API_BASE}/visualization/plots",
-        json=payload,
-        headers=_auth_headers(),
-        timeout=60,
-    )
+        elif ptype == "line":
+            fig = px.line(plot_df, x=x, y=y, color=color, title=title)
 
-    _raise(resp)
-    return resp.json()
+        elif ptype == "scatter":
+            if constraints.get("trend"):
+                fig = px.scatter(
+                    plot_df, x=x, y=y, color=color, title=title,
+                    trendline="ols",
+                    trendline_color_override="#FF4B4B",
+                )
+                fig.update_traces(
+                    selector=dict(mode="lines"),
+                    line=dict(width=4, dash="solid"),
+                )
+                fig.update_traces(
+                    selector=dict(mode="markers"),
+                    marker=dict(opacity=0.55, size=7),
+                )
+            else:
+                fig = px.scatter(plot_df, x=x, y=y, color=color, title=title)
 
+        elif ptype == "histogram":
+            bins = constraints.get("bins", 20)
+            fig = px.histogram(plot_df, x=x, nbins=bins, color=color, title=title)
 
-def suggest_visualizations_api(dataset_id: str, profile_data: dict) -> dict:
+        elif ptype == "box":
+            fig = px.box(plot_df, x=x, y=y, color=color, title=title)
 
-    if "last_run_id" not in st.session_state:
-        raise RuntimeError("Cleaning run_id missing in session_state")
+        elif ptype == "heatmap":
+            if not x and not y:
+                corr = plot_df.select_dtypes(include="number").corr()
+                fig = px.imshow(corr, text_auto=True, title="Correlation Matrix")
+            else:
+                fig = px.density_heatmap(plot_df, x=x, y=y, title=title)
 
-    resp = requests.post(
-        f"{API_BASE}/visualization/suggest",
-        json={
-            "dataset_id": dataset_id,
-            "run_id": st.session_state["last_run_id"],  # 🔥 ОБЯЗАТЕЛЬНО
-            "profile_data": profile_data,
-        },
-        headers=_auth_headers(),
-        timeout=120,
-    )
+        elif ptype == "pie":
+            fig = px.pie(plot_df, names=x, values=y, title=title)
 
-    _raise(resp)
-    return resp.json()
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, key=f"chart_{slot_key}")
 
+            btn_col, txt_col = st.columns([1, 4])
+            with btn_col:
+                if st.button("✨ Explain Insight", key=f"explain_btn_{slot_key}"):
+                    with st.spinner("Analyzing…"):
+                        insight = explain_chart(title, x or "Index", y or "Value")
+                        st.session_state[f"insight_{slot_key}"] = insight
 
-def explain_chart_api(title: str, x_col: str, y_col: str) -> str:
-    axis_info = f"X-Axis: {x_col}, Y-Axis: {y_col}"
+            if st.session_state.get(f"insight_{slot_key}"):
+                with txt_col:
+                    st.info(st.session_state[f"insight_{slot_key}"])
+        else:
+            st.warning(f"Could not render plot type: `{ptype}`")
 
-    resp = requests.post(
-        f"{API_BASE}/visualization/explain",
-        json={"plot_title": title, "axis_info": axis_info},
-        headers=_auth_headers(),
-        timeout=30,
-    )
+    except Exception as e:
+        st.error(f"Could not render plot: {e}")
 
-    if resp.status_code == 200:
-        return resp.json().get("explanation", "No explanation available.")
-    return f"Error: {resp.text}"
-
-
-# -----------------------------
-# STATE
-# -----------------------------
-
-def _ensure_state():
-    if "viz_plan" not in st.session_state:
-        st.session_state.viz_plan = {}
-    if "viz_run_id" not in st.session_state:
-        st.session_state.viz_run_id = {}
-    if "saved_viz_plots" not in st.session_state:
-        st.session_state.saved_viz_plots = set()
-    if "insights" not in st.session_state:
-        st.session_state.insights = {}
-
-
-# -----------------------------
-# MAIN TAB
-# -----------------------------
 
 def render_tab_visualization():
-    _ensure_state()
-
     st.header("AI-Driven Visualization Agent")
 
     dataset_id = st.session_state.get("active_dataset_id")
@@ -116,159 +117,89 @@ def render_tab_visualization():
         st.info("Please upload and select a dataset first.")
         return
 
-    if "last_run_id" not in st.session_state:
-        st.warning("No cleaning run found. Please run Data Cleaning first.")
-        return
-
     run_store = st.session_state.get("runs_store", {}).get(dataset_id)
     if not run_store or "report" not in run_store:
         st.warning("No cleaning report found. Please run the Data Cleaning pipeline (Tab 2) first.")
         return
 
-    cleaning_report = run_store["report"]
-    profile_data = cleaning_report.get("post_profile")
+    profile_data = run_store["report"].get("post_profile")
     if not profile_data:
         st.error("The cleaning report does not contain a profile.")
         return
 
-    st.markdown("This agent analyzes dataset signals to suggest optimal plots.")
+    pairing_key  = f"viz_pairings_{dataset_id}"
+    selected_key = f"viz_selected_{dataset_id}"
 
-    # -----------------------------
-    # GENERATE PLAN
-    # -----------------------------
+    all_pairings = st.session_state.get(pairing_key)
+    selected_idx = st.session_state.get(selected_key)
 
-    if st.button("Generate Plot Plan", type="primary"):
-        with st.spinner("Consulting Visualization Agent..."):
-            try:
-                payload = suggest_visualizations_api(dataset_id, profile_data)
-                plan = payload.get("plan") or payload
-
-                st.session_state.viz_plan[dataset_id] = plan
-
-                if payload.get("viz_run_id"):
-                    st.session_state.viz_run_id[dataset_id] = payload["viz_run_id"]
-
-            except Exception as e:
-                st.error(f"Agent failed: {e}")
-                return
-
-    plan = st.session_state.viz_plan.get(dataset_id)
-    viz_run_id = st.session_state.viz_run_id.get(dataset_id)
-
-    if not plan:
-        st.info("Generate a plot plan to see visualizations.")
+    if not all_pairings:
+        st.info(
+            "No column pairings yet. Go to the **Signals** tab → **Generate Column Pairings** "
+            "→ select combinations → come back here."
+        )
         return
 
-    plots = plan.get("plots", []) if isinstance(plan, dict) else []
-    st.success(f"Agent generated {len(plots)} visualizations.")
+    selected_pairings = [
+        all_pairings[i] for i in (selected_idx or []) if i < len(all_pairings)
+    ]
 
-    # -----------------------------
-    # LOAD DATASET
-    # -----------------------------
-
-    try:
-        with st.spinner("Fetching dataset for rendering..."):
-            data_bytes = download_dataset(dataset_id, version="current", fmt="xlsx")
-            df = pd.read_excel(BytesIO(data_bytes))
-    except Exception as e:
-        st.error(f"Failed to load dataset: {e}")
+    if not selected_pairings:
+        st.warning("No pairings selected. Go back to the **Signals** tab and tick at least one.")
         return
 
-    # -----------------------------
-    # RENDER PLOTS
-    # -----------------------------
-
-    for i, plot_cfg in enumerate(plots):
-        title = plot_cfg.get("title") or f"Plot {i + 1}"
-        desc = plot_cfg.get("description") or ""
-        ptype = plot_cfg.get("plot_type")
-        x = plot_cfg.get("x_column")
-        y = plot_cfg.get("y_column")
-        color = plot_cfg.get("color_column")
-        constraints = plot_cfg.get("constraints", {}) or {}
-
-        st.subheader(f"{i + 1}. {title}")
-        if desc:
-            st.caption(desc)
-
+    df_key = f"viz_df_{dataset_id}"
+    if df_key not in st.session_state:
         try:
-            plot_df = df.copy()
-
-            if constraints.get("top_k") and x:
-                top_k = int(constraints["top_k"])
-                if y:
-                    top_cats = plot_df.groupby(x)[y].sum().nlargest(top_k).index
-                else:
-                    top_cats = plot_df[x].value_counts().nlargest(top_k).index
-                plot_df = plot_df[plot_df[x].isin(top_cats)]
-
-            fig = None
-
-            if ptype == "bar":
-                fig = px.bar(plot_df, x=x, y=y, color=color)
-            elif ptype == "line":
-                fig = px.line(plot_df, x=x, y=y, color=color)
-            elif ptype == "scatter":
-                fig = px.scatter(plot_df, x=x, y=y, color=color)
-            elif ptype == "histogram":
-                fig = px.histogram(plot_df, x=x, y=y, color=color)
-            elif ptype == "box":
-                fig = px.box(plot_df, x=x, y=y, color=color)
-            elif ptype == "heatmap":
-                if not x and not y:
-                    corr = plot_df.select_dtypes(include="number").corr()
-                    fig = px.imshow(corr, text_auto=True)
-                else:
-                    fig = px.density_heatmap(plot_df, x=x, y=y)
-            elif ptype == "pie":
-                fig = px.pie(plot_df, names=x, values=y)
-
-            if fig is None:
-                st.warning(f"Unsupported plot type: {ptype}")
-                st.divider()
-                continue
-
-            fig.update_layout(template="plotly_white")
-            st.plotly_chart(fig, use_container_width=True)
-
-            # -----------------------------
-            # AUTO SAVE
-            # -----------------------------
-
-            if viz_run_id:
-                save_key = f"{viz_run_id}::{i}"
-                if save_key not in st.session_state.saved_viz_plots:
-                    try:
-                        save_viz_plot_api(
-                            viz_run_id=viz_run_id,
-                            dataset_id=dataset_id,
-                            plot_index=i,
-                            title=title,
-                            plot_type=ptype or "unknown",
-                            fig=fig,
-                        )
-                        st.session_state.saved_viz_plots.add(save_key)
-                    except Exception as e:
-                        st.warning(f"Auto-save failed: {e}")
-
-            # -----------------------------
-            # INSIGHTS
-            # -----------------------------
-
-            c1, c2 = st.columns([1, 4])
-
-            with c1:
-                if st.button("✨ Explain Insight", key=f"explain_{dataset_id}_{i}"):
-                    with st.spinner("Analyzing..."):
-                        insight = explain_chart_api(title, x or "Index", y or "Value")
-                        st.session_state.insights[f"{dataset_id}::{i}"] = insight
-
-            with c2:
-                insight_key = f"{dataset_id}::{i}"
-                if st.session_state.insights.get(insight_key):
-                    st.info(st.session_state.insights[insight_key])
-
+            with st.spinner("Loading dataset…"):
+                data_bytes = download_dataset(dataset_id, version="current", fmt="xlsx")
+                st.session_state[df_key] = pd.read_excel(BytesIO(data_bytes))
         except Exception as e:
-            st.error(f"Could not render plot: {e}")
+            st.error(f"Failed to load dataset: {e}")
+            return
 
-        st.divider()
+    df = st.session_state[df_key]
+
+    st.markdown(
+        f"**{len(selected_pairings)} pairing(s)** ready. "
+        "Click **Generate** on each one to produce its visualization."
+    )
+    st.markdown("---")
+
+    for i, pairing in enumerate(selected_pairings):
+        cols_label = " + ".join(pairing.get("columns", []))
+        template   = pairing.get("template", "")
+        score      = pairing.get("score")
+        score_str  = f"{score:.2f}" if score is not None else "—"
+        plot_key   = f"viz_plot_{dataset_id}_{i}"
+
+        with st.container(border=True):
+            top_left, top_right = st.columns([5, 2])
+            with top_left:
+                st.markdown(f"#### {i + 1}. `{cols_label}`")
+                st.caption(f"Template: **{template}** · Score: **{score_str}** · {pairing.get('rationale', '')}")
+            with top_right:
+                if st.button(
+                        "Generate ▶",
+                        key=f"gen_btn_{dataset_id}_{i}",
+                        type="primary",
+                        use_container_width=True,
+                ):
+                    with st.spinner(f"Generating plot for {cols_label}…"):
+                        try:
+                            plots = get_visualization_plots(
+                                dataset_id,
+                                profile_data,
+                                [pairing],
+                            )
+                            if plots:
+                                st.session_state[plot_key] = plots[0]
+                        except Exception as e:
+                            st.error(f"Plot generation failed: {e}")
+
+            plot_cfg = st.session_state.get(plot_key)
+            if plot_cfg:
+                st.divider()
+                _render_plot(plot_cfg, df, slot_key=f"{dataset_id}_{i}")
+
+        st.markdown("")

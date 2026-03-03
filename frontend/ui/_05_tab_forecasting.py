@@ -12,11 +12,7 @@ import matplotlib.pyplot as plt
 import copy
 
 from ui import data_access
-
-
-# -----------------------------
-# Small helpers (existing logic)
-# -----------------------------
+from ui.data_access import _api_forecast_signals, _api_forecast_plan, _api_forecast_run
 
 def _get_post_profile_from_runs_store(dataset_id: str) -> Optional[Dict[str, Any]]:
     item = st.session_state.get("runs_store", {}).get(dataset_id)
@@ -102,81 +98,6 @@ def _build_wide_tables(results_list: List[Dict[str, Any]]) -> Tuple[pd.DataFrame
     return wide, intervals
 
 
-# -----------------------------
-# API calls (no need to touch data_access.py)
-# -----------------------------
-
-def _api_forecast_signals(*, dataset_id: str, version: str) -> Dict[str, Any]:
-    resp = requests.post(
-        f"{data_access.API_BASE}/forecast/signals",
-        json={"dataset_id": dataset_id, "version": version},
-        headers=data_access._auth_headers(),
-        timeout=120,
-    )
-    data_access._raise(resp)
-    return resp.json()
-
-
-def _api_forecast_plan(
-    *,
-    dataset_id: str,
-    version: str,
-    signals: Dict[str, Any],
-    profile: Optional[Dict[str, Any]],
-    user_intent: Optional[str],
-    max_targets: int,
-    head_rows: int,
-    horizon: int,
-) -> Dict[str, Any]:
-    payload = {
-        "dataset_id": dataset_id,
-        "version": version,
-        "signals": signals,
-        "profile": profile,
-        "user_intent": user_intent,
-        "max_targets": int(max_targets),
-        "head_rows": int(head_rows),
-        "horizon": int(horizon),
-    }
-    resp = requests.post(
-        f"{data_access.API_BASE}/forecast/plan",
-        json=payload,
-        headers=data_access._auth_headers(),
-        timeout=180,
-    )
-    data_access._raise(resp)
-    return resp.json()
-
-
-def _api_forecast_run(
-    *,
-    dataset_id: str,
-    version: str,
-    run_id: str,
-    plan: Dict[str, Any],
-    horizon: int,
-    model: str,
-    preview_rows: int = 50,
-) -> Dict[str, Any]:
-    payload = {
-        "dataset_id": dataset_id,
-        "run_id": run_id,
-        "plan": plan,
-        "model": model,
-        "version": version,
-        "horizon": int(horizon),
-        "preview_rows": int(preview_rows),
-    }
-    resp = requests.post(
-        f"{data_access.API_BASE}/forecast/run",
-        json=payload,
-        headers=data_access._auth_headers(),
-        timeout=600,
-    )
-    data_access._raise(resp)
-    return resp.json()
-
-
 def _api_save_forecast_plot(*, forecast_run_id: str, dataset_id: str, target: str, png_bytes: bytes) -> None:
     payload = {
         "forecast_run_id": forecast_run_id,
@@ -192,10 +113,6 @@ def _api_save_forecast_plot(*, forecast_run_id: str, dataset_id: str, target: st
     )
     data_access._raise(resp)
 
-
-# -----------------------------
-# Main tab
-# -----------------------------
 
 def render_tab_forecasting(dataset_id: str) -> None:
     st.subheader("Forecasting")
@@ -228,7 +145,6 @@ def render_tab_forecasting(dataset_id: str) -> None:
 
     st.divider()
 
-    # One-button flow
     c_run, c_reset = st.columns([1, 1])
     with c_run:
         run_btn = st.button("Generate forecast", type="primary")
@@ -243,7 +159,6 @@ def render_tab_forecasting(dataset_id: str) -> None:
         st.stop()
 
     if run_btn:
-        # clear previous result for clean UX
         for k in ["forecast_signals", "forecast_plan", "forecast_result"]:
             if k in st.session_state:
                 del st.session_state[k]
@@ -255,7 +170,6 @@ def render_tab_forecasting(dataset_id: str) -> None:
                 signals = _api_forecast_signals(dataset_id=dataset_id, version=version)
                 st.session_state["forecast_signals"] = signals
 
-                # quick status metrics (no JSON)
                 feasible = bool(signals.get("feasible"))
                 if not feasible:
                     st.warning(
@@ -280,10 +194,8 @@ def render_tab_forecasting(dataset_id: str) -> None:
                     st.warning("Planner decided to skip forecasting for this dataset.")
                     st.stop()
 
-                # --- force UI parameters into plan (IMPORTANT) ---
                 plan_for_run = copy.deepcopy(plan)
 
-                # enforce max_targets on the plan
                 targets = plan_for_run.get("targets") or []
                 if isinstance(targets, list):
                     plan_for_run["targets"] = targets[: int(max_targets)]
@@ -295,8 +207,8 @@ def render_tab_forecasting(dataset_id: str) -> None:
                     dataset_id=dataset_id,
                     version=version,
                     run_id=run_id,
-                    plan=plan_for_run,  # <-- use modified plan
-                    horizon=int(horizon),  # keep this too
+                    plan=plan_for_run,
+                    horizon=int(horizon),
                     model=model,
                     preview_rows=int(horizon),
                 )
@@ -312,7 +224,6 @@ def render_tab_forecasting(dataset_id: str) -> None:
                 st.error(f"Forecast failed: {e}")
                 st.stop()
 
-    # If nothing ran yet
     result = st.session_state.get("forecast_result")
     if not result:
         st.info("Click **Generate forecast** to run everything automatically.")
@@ -323,7 +234,6 @@ def render_tab_forecasting(dataset_id: str) -> None:
         st.info("Forecast returned empty results.")
         return
 
-    # Minimal summary (no JSON)
     signals = st.session_state.get("forecast_signals") or {}
     plan = st.session_state.get("forecast_plan") or {}
     c1, c2, c3, c4 = st.columns(4)
@@ -354,7 +264,6 @@ def render_tab_forecasting(dataset_id: str) -> None:
     st.divider()
     st.markdown("### Plots")
 
-    # Load historical dataset for overlay plot
     try:
         hist_csv_bytes = data_access.dataset_download_bytes(
             dataset_id=dataset_id,
@@ -419,7 +328,6 @@ def render_tab_forecasting(dataset_id: str) -> None:
             merged = merged[["train", "forecast"]]
             st.line_chart(merged)
 
-        # Auto-save plot PNG to backend (once per target)
         if not frun_id:
             continue
 
