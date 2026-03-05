@@ -1,8 +1,8 @@
-# frontend/ui/_00_tab_authentication.py
+# frontend/ui/tab_00_authentication.py
 from __future__ import annotations
 
 from typing import Optional
-from ui.data_access import register_user, login_user, auth_me, logout_user
+from frontend.helpers.data_access import register_user, login_user, auth_me, logout_user
 
 import streamlit as st
 import extra_streamlit_components as stx

@@ -1,4 +1,4 @@
-# frontend/ui/_03_tab_signals.py
+# frontend/ui/tab_03_signals.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -164,71 +164,6 @@ def _render_profile_block(title: str, profile: Optional[Dict[str, Any]]):
         st.warning("\n".join([str(x) for x in warnings]))
 
 
-def _render_pairing_section(dataset_id: str, profile: Dict[str, Any]):
-
-    from ui.data_access import get_visualization_pairings
-
-    st.divider()
-    st.subheader("📊 Visualization Planning — Stage 1")
-    st.caption(
-        "The Pairing Agent analyzes your cleaned dataset signals and proposes the most "
-        "informative column combinations to visualize. Select the ones you want and proceed "
-        "to the Visualization tab to generate plots."
-    )
-
-    pairing_key = f"viz_pairings_{dataset_id}"
-
-    if st.button("Generate Column Pairings", type="primary", key=f"btn_pairings_{dataset_id}"):
-        with st.spinner("Running Pairing Agent (Stage 1)…"):
-            try:
-                result = get_visualization_pairings(dataset_id, profile)
-                st.session_state[pairing_key] = result.get("pairings", [])
-                st.session_state.pop(f"viz_selected_{dataset_id}", None)
-                st.session_state.pop(f"viz_plots_{dataset_id}", None)
-            except Exception as e:
-                st.error(f"Pairing Agent failed: {e}")
-
-    pairings = st.session_state.get(pairing_key)
-    if not pairings:
-        return
-
-    st.success(f"Found **{len(pairings)} column pairings**. Select which ones you want to visualize:")
-
-    pairing_rows = []
-    for p in sorted(pairings, key=lambda x: x.get("rank") or 999):
-        pairing_rows.append({
-            "Rank":      p.get("rank", "—"),
-            "Score":     f"{p['score']:.2f}" if p.get("score") is not None else "—",
-            "Columns":   " + ".join(p.get("columns", [])),
-            "Template":  p.get("template", "—"),
-            "Rationale": p.get("rationale", ""),
-        })
-
-    df_pairings = pd.DataFrame(pairing_rows)
-
-    selected_key = f"viz_selected_{dataset_id}"
-    if selected_key not in st.session_state:
-        st.session_state[selected_key] = list(range(len(pairings)))  # all selected by default
-
-    st.write("**Tick the pairings you want to visualize:**")
-    newly_selected = []
-    for i, row in df_pairings.iterrows():
-        checked = i in st.session_state[selected_key]
-        label = f"**{row['Columns']}** — {row['Template']}  ·  score {row['Score']}  ·  {row['Rationale']}"
-        if st.checkbox(label, value=checked, key=f"pair_chk_{dataset_id}_{i}"):
-            newly_selected.append(i)
-
-    st.session_state[selected_key] = newly_selected
-
-    n_selected = len(newly_selected)
-    if n_selected == 0:
-        st.warning("No pairings selected — select at least one before going to the Visualization tab.")
-    else:
-        st.info(
-            f"✅ **{n_selected} pairing(s) selected.** "
-            "Go to the **Visualization** tab and click **Generate Plots** to render them."
-        )
-
 
 def render_tab_signals(cleaning_report: dict):
     pre  = (cleaning_report or {}).get("pre_profile")
@@ -247,6 +182,3 @@ def render_tab_signals(cleaning_report: dict):
 
     with tab_post:
         _render_profile_block("After cleaning", post if isinstance(post, dict) else {})
-
-        if isinstance(post, dict) and dataset_id:
-            _render_pairing_section(dataset_id, post)

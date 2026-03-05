@@ -1,4 +1,4 @@
-# frontend/ui/_05_tab_forecasting.py
+# frontend/ui/tab_05_forecasting.py
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, List, Tuple
@@ -11,8 +11,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import copy
 
-from ui import data_access
-from ui.data_access import _api_forecast_signals, _api_forecast_plan, _api_forecast_run
+from frontend.helpers.data_access import api_forecast_signals, api_forecast_plan, api_forecast_run, dataset_download_bytes, api_save_forecast_plot
 
 def _get_post_profile_from_runs_store(dataset_id: str) -> Optional[Dict[str, Any]]:
     item = st.session_state.get("runs_store", {}).get(dataset_id)
@@ -98,22 +97,6 @@ def _build_wide_tables(results_list: List[Dict[str, Any]]) -> Tuple[pd.DataFrame
     return wide, intervals
 
 
-def _api_save_forecast_plot(*, forecast_run_id: str, dataset_id: str, target: str, png_bytes: bytes) -> None:
-    payload = {
-        "forecast_run_id": forecast_run_id,
-        "dataset_id": dataset_id,
-        "target": target,
-        "png_base64": base64.b64encode(png_bytes).decode("utf-8"),
-    }
-    resp = requests.post(
-        f"{data_access.API_BASE}/forecast/plots",
-        json=payload,
-        headers=data_access._auth_headers(),
-        timeout=60,
-    )
-    data_access._raise(resp)
-
-
 def render_tab_forecasting(dataset_id: str) -> None:
     st.subheader("Forecasting")
 
@@ -167,7 +150,7 @@ def render_tab_forecasting(dataset_id: str) -> None:
 
         with st.spinner("Running forecasting pipeline (signals → plan → run)..."):
             try:
-                signals = _api_forecast_signals(dataset_id=dataset_id, version=version)
+                signals = api_forecast_signals(dataset_id=dataset_id, version=version)
                 st.session_state["forecast_signals"] = signals
 
                 feasible = bool(signals.get("feasible"))
@@ -178,7 +161,7 @@ def render_tab_forecasting(dataset_id: str) -> None:
                     )
                     st.stop()
 
-                plan = _api_forecast_plan(
+                plan = api_forecast_plan(
                     dataset_id=dataset_id,
                     version=version,
                     signals=signals,
@@ -203,7 +186,7 @@ def render_tab_forecasting(dataset_id: str) -> None:
                         if isinstance(t, dict):
                             t["horizon"] = int(horizon)
 
-                result = _api_forecast_run(
+                result = api_forecast_run(
                     dataset_id=dataset_id,
                     version=version,
                     run_id=run_id,
@@ -265,7 +248,7 @@ def render_tab_forecasting(dataset_id: str) -> None:
     st.markdown("### Plots")
 
     try:
-        hist_csv_bytes = data_access.dataset_download_bytes(
+        hist_csv_bytes = dataset_download_bytes(
             dataset_id=dataset_id,
             version=version,
             fmt="csv",
@@ -356,7 +339,7 @@ def render_tab_forecasting(dataset_id: str) -> None:
             fig.savefig(buf, format="png", bbox_inches="tight", dpi=200)
             plt.close(fig)
 
-            _api_save_forecast_plot(
+            api_save_forecast_plot(
                 forecast_run_id=frun_id,
                 dataset_id=dataset_id,
                 target=tcol,

@@ -1,4 +1,4 @@
-# frontend/ui/_02_tab_cleaning.py
+# frontend/ui/tab_02_cleaning.py
 from __future__ import annotations
 
 import io
@@ -7,13 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
-from ui.data_access import (
-    suggest_policy,
-    run_cleaning,
-    get_run_report,
-    download_artifact,
-    get_preview,
-)
+from frontend.helpers.data_access import suggest_policy, run_cleaning, get_run_report, download_artifact, get_preview
 
 
 def _is_excel_file(file_name: str) -> bool:

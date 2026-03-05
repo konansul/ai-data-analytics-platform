@@ -7,8 +7,8 @@ from typing import Any, Dict, List
 import pandas as pd
 import streamlit as st
 
-from ui.components import sheets_summary_table
-from ui.data_access import cached_upload, get_preview
+from frontend.helpers.components import sheets_summary_table
+from frontend.helpers.data_access import cached_upload, get_preview
 
 
 def _is_excel_file(file_name: str) -> bool:
@@ -102,7 +102,6 @@ def render_tab_ingestion() -> None:
     st.session_state["active_datasets_meta"] = datasets_meta
     st.session_state["active_sheet_meta"] = sheet_meta
     st.session_state["active_dataset_id"] = dataset_id
-
     st.session_state["datasets_meta"] = datasets_meta
 
     st.divider()
