@@ -1,3 +1,5 @@
+# backend/api/main.py
+
 from pathlib import Path
 from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[2]
@@ -9,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.database.db import engine
 from backend.database.models import Base
 
-from backend.api import datasets, profiling, policy, cleaning, auth, visualization, forecasting
+from backend.api import datasets, profiling, policy, cleaning, auth, visualization, forecasting, reporting
 
 app = FastAPI(title="4CAST — AI Data Cleaning, Visualization, and Forecasting Platform",
               version="2.0",
@@ -32,3 +34,4 @@ app.include_router(policy.router, prefix="/v1", tags=["Policy"])
 app.include_router(cleaning.router, prefix="/v1", tags=["Cleaning"])
 app.include_router(visualization.router, prefix="/v1", tags=["Visualization"])
 app.include_router(forecasting.router, prefix="/v1", tags=["Forecasting"])
+app.include_router(reporting.router, prefix="/v1", tags=["Reporting"])
