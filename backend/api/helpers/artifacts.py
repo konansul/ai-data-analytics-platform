@@ -1,4 +1,4 @@
-# backend/services/artifacts.py
+# backend/api/helpers/artifacts.py
 
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.database.storage import new_id
 from backend.database.models import Artifact
-from backend.database.storage import to_jsonable
+from backend.database.storage import to_jsonable, get_json, exists
 
 
 def add_artifact(
@@ -41,3 +41,13 @@ def add_artifact(
 
 def _artifact_id() -> str:
     return new_id("art")
+
+def read_json_from_storage_safe(storage_key: str) -> Optional[Dict[str, Any]]:
+
+    try:
+        if not exists(storage_key):
+            return None
+        obj = get_json(storage_key)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
