@@ -1,4 +1,5 @@
 # backend/database/storage.py
+
 from __future__ import annotations
 
 import os
@@ -7,7 +8,7 @@ import json
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -231,3 +232,17 @@ def viz_prefix(user_id: str, run_id: str) -> str:
 
 def forecast_prefix(user_id: str, run_id: str, forecast_run_id: str) -> str:
     return f"{run_prefix(user_id, run_id)}/forecast/{forecast_run_id}"
+
+def list_keys(prefix: str) -> List[str]:
+    prefix = _sanitize_key(prefix).rstrip("/")
+    base = _full_path(prefix)
+
+    if not base.exists():
+        return []
+
+    out: List[str] = []
+    for p in base.rglob("*"):
+        if p.is_file():
+            rel = p.relative_to(BLOB_DIR).as_posix()
+            out.append(rel)
+    return sorted(out)
