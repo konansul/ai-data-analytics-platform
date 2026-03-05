@@ -3,25 +3,18 @@ import streamlit as st
 
 
 def sheets_summary_table(sheets_or_meta):
-    """
-    Accepts:
-      - list[dict] from API: {"sheet_name","shape","dataset_id",...}
-      - or list[SheetContext]-like objects with attributes: sheet_name, shape, dataset_id
-    """
+
     rows = []
     for i, s in enumerate(sheets_or_meta or [], start=1):
-        # dict from API
         if isinstance(s, dict):
             sheet_name = s.get("sheet_name")
             shape = s.get("shape") or [None, None]
             dataset_id = s.get("dataset_id")
         else:
-            # object (old mode)
             sheet_name = getattr(s, "sheet_name", None)
             shape = getattr(s, "shape", (None, None)) or (None, None)
             dataset_id = getattr(s, "dataset_id", None)
 
-        # normalize shape
         if isinstance(shape, (tuple, list)) and len(shape) >= 2:
             n_rows, n_cols = shape[0], shape[1]
         else:

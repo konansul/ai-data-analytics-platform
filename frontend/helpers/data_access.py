@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import requests
+import base64
 import streamlit as st
 from typing import Any, Dict, List, Optional
 
 API_BASE = "http://127.0.0.1:8000/v1"
 TIMEOUT = 120
 
+def dataset_download_bytes(dataset_id: str, version: str, fmt: str = "csv") -> bytes:
+    return download_dataset(dataset_id=dataset_id, version=version, fmt=fmt)
 
 def _raise(resp: requests.Response):
     try:
@@ -234,7 +237,7 @@ def explain_chart(plot_title: str, x_col: str, y_col: str) -> str:
     return f"Error: {resp.text}"
 
 
-def _api_forecast_signals(*, dataset_id: str, version: str) -> Dict[str, Any]:
+def api_forecast_signals(*, dataset_id: str, version: str) -> Dict[str, Any]:
     resp = requests.post(
         f"{API_BASE}/forecast/signals",
         json={"dataset_id": dataset_id, "version": version},
@@ -245,7 +248,7 @@ def _api_forecast_signals(*, dataset_id: str, version: str) -> Dict[str, Any]:
     return resp.json()
 
 
-def _api_forecast_plan(
+def api_forecast_plan(
     *,
     dataset_id: str,
     version: str,
@@ -276,7 +279,7 @@ def _api_forecast_plan(
     return resp.json()
 
 
-def _api_forecast_run(
+def api_forecast_run(
     *,
     dataset_id: str,
     version: str,
@@ -304,5 +307,64 @@ def _api_forecast_run(
     _raise(resp)
     return resp.json()
 
-def dataset_download_bytes(dataset_id: str, version: str, fmt: str = "csv") -> bytes:
-    return download_dataset(dataset_id=dataset_id, version=version, fmt=fmt)
+def api_save_viz_plot(*, dataset_id: str, run_id: str, title: str, png_bytes: bytes) -> None:
+    payload = {
+        "dataset_id": dataset_id,
+        "run_id": run_id,
+        "title": title,
+        "png_base64": base64.b64encode(png_bytes).decode("utf-8"),
+    }
+    resp = requests.post(
+        f"{API_BASE}/visualization/plots/save",
+        json=payload,
+        headers=_auth_headers(),
+        timeout=60,
+    )
+    _raise(resp)
+
+def api_save_forecast_plot(*, forecast_run_id: str, dataset_id: str, target: str, png_bytes: bytes) -> None:
+    payload = {
+        "forecast_run_id": forecast_run_id,
+        "dataset_id": dataset_id,
+        "target": target,
+        "png_base64": base64.b64encode(png_bytes).decode("utf-8"),
+    }
+    resp = requests.post(
+        f"{API_BASE}/forecast/plots",
+        json=payload,
+        headers=_auth_headers(),
+        timeout=60,
+    )
+    _raise(resp)
+
+
+def api_generate_pdf_report(
+    *,
+    dataset_id: str,
+    run_id: str,
+    title: str | None = None,
+    max_viz_plots: int = 3,
+    max_forecast_plots: int = 3,
+) -> dict:
+    url = f"{API_BASE}/reporting/generate"
+    payload = {
+        "dataset_id": dataset_id,
+        "run_id": run_id,
+        "title": title,
+        "max_viz_plots": max_viz_plots,
+        "max_forecast_plots": max_forecast_plots,
+        "return_pdf": False,
+    }
+
+    r = requests.post(url, json=payload, headers=_auth_headers(), timeout=180)
+    if r.status_code >= 400:
+        raise RuntimeError(f"{r.status_code}: {r.text}")
+    return r.json()
+
+
+def api_download_report_pdf(*, storage_key: str) -> bytes:
+    url = f"{API_BASE}/reporting/download"
+    r = requests.get(url, params={"storage_key": storage_key}, headers=_auth_headers(), timeout=180)
+    if r.status_code >= 400:
+        raise RuntimeError(f"{r.status_code}: {r.text}")
+    return r.content
