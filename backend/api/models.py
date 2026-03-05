@@ -155,3 +155,17 @@ class VizRequest(BaseModel):
     dataset_id: str
     run_id: str
     profile_data: Dict[str, Any]
+
+class GenerateReportRequest(BaseModel):
+    dataset_id: str = Field(..., description="Dataset id")
+    run_id: str = Field(..., description="Cleaning run id (run_xxx)")
+    title: Optional[str] = Field(None, description="Optional report title")
+    max_viz_plots: int = 3
+    max_forecast_plots: int = 3
+    return_pdf: bool = True
+
+
+class GenerateReportResponse(BaseModel):
+    report_run_id: str
+    artifact_id: str
+    storage_key: str
