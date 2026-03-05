@@ -1,4 +1,5 @@
-# backend/app/cleaning/_09_outliers.py
+# backend/app/cleaning/cleaning_steps/_09_outliers.py
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Optional
@@ -12,11 +13,11 @@ def handle_outliers(
     *,
     params: Optional[Dict[str, Any]] = None,
     enabled: bool = True,
-    method: str = "quantile",             # "quantile" | "iqr"
+    method: str = "quantile",
     quantiles: Tuple[float, float] = (0.01, 0.99),
     iqr_k: float = 1.5,
     min_rows: int = 30,
-    skip_low_unique_ratio: float = 0.02,  # skip id-like cols (almost all values unique)
+    skip_low_unique_ratio: float = 0.02,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     params = params or {}
 
@@ -24,8 +25,8 @@ def handle_outliers(
     method = str(params.get("outliers_method", method))
     outliers_action = str(params.get("outliers_action", "clip"))
     iqr_k = float(params.get("iqr_k", iqr_k))
-    zscore_threshold = float(params.get("zscore_threshold", 3.0))  # reserved
-    quantiles = tuple(params.get("quantiles", quantiles))  # type: ignore[assignment]
+    zscore_threshold = float(params.get("zscore_threshold", 3.0))
+    quantiles = tuple(params.get("quantiles", quantiles))
 
     report: Dict[str, Any] = {
         "enabled": bool(enabled),

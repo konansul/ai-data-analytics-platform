@@ -1,4 +1,5 @@
-# backend/app/cleaning/_02_trim_strings.py
+# backend/app/cleaning/cleaning_steps/_02_trim_strings.py
+
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 import pandas as pd

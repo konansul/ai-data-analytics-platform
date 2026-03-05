@@ -1,4 +1,5 @@
-# backend/app/cleaning/_01_normalize.py
+# backend/app/cleaning/cleaning_steps/_01_normalize.py
+
 from __future__ import annotations
 
 from typing import Dict, Tuple
@@ -6,18 +7,7 @@ import pandas as pd
 
 
 def normalize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
-    """
-    Normalize column names:
-      - cast to str
-      - strip
-      - lowercase
-      - replace whitespace with underscore
-      - remove duplicated underscores
-      - keep alnum + underscore
 
-    Returns:
-      clean_df, renamed_map (only changed columns)
-    """
     clean_df = df.copy()
     original = list(clean_df.columns)
 

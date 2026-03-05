@@ -1,7 +1,6 @@
 # backend/app/forecasting/execution.py
-from __future__ import annotations
 
-from dataclasses import dataclass
+from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np

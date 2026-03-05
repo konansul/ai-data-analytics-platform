@@ -1,4 +1,5 @@
-# backend/app/cleaning_agent/schema.py
+# backend/app/cleaning/cleaning_agent/schema.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -20,16 +21,7 @@ StepName = Literal[
 
 @dataclass(frozen=True)
 class CleaningPlan:
-    """
-    A structured, testable plan for running the cleaning pipeline.
 
-    - enabled_steps: which pipeline steps are enabled/disabled
-    - params: thresholds/strategies for deterministic Pandas logic
-    - notes: human-readable reasoning/explanations (from rule-based or LLM)
-    - source: where the plan came from (rule_based / llm)
-    - version: plan schema version
-
-    """
     enabled_steps: Dict[StepName, bool]
     params: Dict[str, Any] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)

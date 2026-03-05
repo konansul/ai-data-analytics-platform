@@ -1,4 +1,5 @@
-# backend/app/cleaning_agent/llm_client.py
+# backend/app/cleaning/cleaning_agent/llm_client.py
+
 from __future__ import annotations
 
 import json
@@ -19,11 +20,7 @@ JSONType = Union[Dict[str, Any], list]
 
 @dataclass
 class LLMClient:
-    """
-    Gemini client wrapper (Google GenAI SDK).
-    - complete(prompt) -> str
-    - extract_json(text) -> dict (or list, but we validate higher-level anyway)
-    """
+
     model: str = "gemini-2.5-flash"
     api_key: Optional[str] = None
     _client: Any = None
@@ -56,13 +53,7 @@ class LLMClient:
         return text
 
     def extract_json(self, text: str) -> JSONType:
-        """
-        Extract JSON from model output.
-        Supports:
-        - pure JSON (dict OR list)
-        - JSON wrapped in ```json ... ```
-        - extra text around JSON
-        """
+
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Empty LLM response, cannot extract JSON.")
 

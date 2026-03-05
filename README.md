@@ -156,13 +156,13 @@ ai-data-analytics-platform/
 ├── frontend/                         # Streamlit frontend
 │   ├── main_streamlit.py            # UI entrypoint + tab orchestration
 │   └── ui/
-│       ├── _00_tab_authentication.py
-│       ├── _01_tab_excel_upload.py
-│       ├── _02_tab_cleaning.py
-│       ├── _03_tab_signals.py
-│       ├── _04_tab_visualization.py
-│       ├── _05_tab_forecasting.py
-│       ├── _06_save_all_files.py
+│       ├── tab_00_authentication.py
+│       ├── tab_01_excel_upload.py
+│       ├── tab_02_cleaning.py
+│       ├── tab_03_signals.py
+│       ├── tab_04 visualization.py
+│       ├── tab_05_forecasting.py
+│       ├── tab_07_save_all_files.py
 │       ├── components.py
 │       └── data_access.py           # Frontend and backend REST client
 │

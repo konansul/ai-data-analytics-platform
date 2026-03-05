@@ -1,4 +1,5 @@
-# backend/app/cleaning/_07_datetime_inference.py
+# backend/app/cleaning/cleaning_steps/_07_datetime_inference.py
+
 from __future__ import annotations
 
 from typing import List, Tuple, Optional
@@ -15,13 +16,7 @@ def infer_datetime_columns(
     dayfirst: Optional[bool] = None,
     utc: bool = False,
 ) -> Tuple[pd.DataFrame, List[str]]:
-    """
-    Try converting object/category columns to datetime if conversion succeeds
-    for at least datetime_success_ratio of non-null values.
 
-    Protection:
-      - skip text-like columns (letters ratio too high)
-    """
     if not enabled:
         return df, []
 

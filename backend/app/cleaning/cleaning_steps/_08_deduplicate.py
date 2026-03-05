@@ -1,4 +1,5 @@
-# backend/app/cleaning/_08_deduplicate.py
+# backend/app/cleaning/cleaning_steps/_08_deduplicate.py
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,9 +14,7 @@ def deduplicate(
     subset: Optional[List[str]] = None,
     keep: str = "first",
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-    """
-    Drop duplicate rows. Deterministic.
-    """
+
     report: Dict[str, Any] = {
         "enabled": bool(enabled),
         "mode": mode,
